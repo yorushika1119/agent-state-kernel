@@ -293,10 +293,29 @@ async def test_direct_kernel_response_uses_router_target_task_scope():
             EventSubmission(
                 session_id=second.kernel_session_id,
                 component="thinker",
+                request_type="PlanProposed",
+                run_id=second.run_id,
+                intent_version=second.intent_version,
+                payload={
+                    "plan_id": "plan_task_b",
+                    "plan": {
+                        "steps": [
+                            {"step_id": "b_migrate", "name": "迁移向量索引"},
+                        ]
+                    },
+                },
+            )
+        )
+        assert ok, reason
+        ok, reason, _ = await engine.submit_event(
+            EventSubmission(
+                session_id=second.kernel_session_id,
+                component="thinker",
                 request_type="ToolStarted",
                 run_id=second.run_id,
                 payload={
                     "action_id": "act_b_fail",
+                    "step_id": "b_migrate",
                     "tool": "local.b",
                     "input_summary": "读取 B 任务材料",
                 },
@@ -395,6 +414,18 @@ async def test_direct_kernel_response_uses_router_target_task_scope():
         assert progress_reply.action == "respond_from_kernel"
         assert progress_reply.task_id == first.task_id
         assert "收集 webhook 证据" in progress_reply.kernel_response
+        assert "迁移向量索引" not in progress_reply.kernel_response
+        assert "local.b" not in progress_reply.kernel_response
+
+        active_progress = await manager.direct_responder.build_response(
+            second.kernel_session_id,
+            "progress",
+            target_task_id=second.task_id,
+        )
+        assert "迁移向量索引" in active_progress
+        assert "local.b" in active_progress
+        assert "收集 webhook 证据" not in active_progress
+        assert "local.a" not in active_progress
 
         thinker = await engine.get_thinker_view(second.kernel_session_id)
         assert thinker["cancellation"]["active_run_id"] == second.run_id

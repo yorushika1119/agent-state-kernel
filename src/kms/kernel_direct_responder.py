@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from src.schema.events import EventType
-from src.schema.state import ExecutionAction, EvidenceItem, TaskSnapshot, TaskStatus
+from src.schema.state import ExecutionAction, EvidenceItem, TaskFlowState, TaskSnapshot, TaskStatus
 
 
 class KernelDirectResponder:
@@ -73,8 +73,12 @@ class KernelDirectResponder:
                 return f"当前 active run 是 {session.active_run_id}。"
             return "当前没有 active run。"
 
-        if task_scoped and session and session.active_task_id != target_task.task_id:
-            return self._build_task_snapshot_progress(target_task)
+        if task_scoped:
+            return await self._build_task_local_progress(
+                session_id,
+                target_task,
+                active=bool(session and session.active_task_id == target_task.task_id),
+            )
 
         progress = await self.engine.get_talker_view(session_id)
         plan = await self.store.get_plan(session_id)
@@ -94,6 +98,22 @@ class KernelDirectResponder:
             parts.append("The task exists, but there is no additional progress yet.")
         return " ".join(parts)
 
+    async def _build_task_local_progress(
+        self,
+        session_id: str,
+        task: TaskSnapshot,
+        *,
+        active: bool,
+    ) -> str:
+        flow = await self._get_task_flow_for_task(session_id, task)
+        if active:
+            progress = await self.engine.get_talker_view(session_id)
+            plan = await self.store.get_plan(session_id)
+            return self._build_active_task_progress(task, progress, plan, flow)
+        if flow:
+            return self._build_task_flow_progress(task, flow)
+        return self._build_task_snapshot_progress(task)
+
     async def _get_target_task(
         self,
         session_id: str,
@@ -111,24 +131,114 @@ class KernelDirectResponder:
         parts = [f"{title} 当前状态：{task.status.value}。"]
         if task.resume_summary:
             parts.append(task.resume_summary)
-        elif task.current_step_name:
-            parts.append(f"当前步骤：{task.current_step_name}。")
-        elif task.current_step:
-            parts.append(f"当前步骤：{task.current_step}。")
-        elif task.steps:
-            running = next(
-                (
-                    step
-                    for step in task.steps
-                    if step.get("status") == "running"
-                ),
-                None,
-            )
-            if running:
-                parts.append(f"当前步骤：{running.get('name') or running.get('step_id')}。")
+        step_name = task.current_step_name or self._step_name(
+            task.current_step,
+            task.steps,
+        )
+        if step_name:
+            parts.append(f"当前步骤：{step_name}。")
         if len(parts) == 1:
             parts.append("这个任务已记录，但还没有更多进度。")
         return " ".join(parts)
+
+    async def _get_task_flow_for_task(
+        self,
+        session_id: str,
+        task: TaskSnapshot,
+    ) -> TaskFlowState | None:
+        flow = await self.store.get_task_flow(session_id)
+        if flow and flow.task_id == task.task_id:
+            return flow
+        return None
+
+    def _build_active_task_progress(
+        self,
+        task: TaskSnapshot,
+        progress: Any,
+        plan: Any,
+        flow: TaskFlowState | None,
+    ) -> str:
+        parts: list[str] = []
+        if progress and progress.summary:
+            parts.append(progress.summary)
+
+        step_name = ""
+        if plan and plan.current_step:
+            current = next((step for step in plan.steps if step.step_id == plan.current_step), None)
+            if current:
+                step_name = current.name
+        if not step_name and flow:
+            step_name = self._step_name(flow.current_step, flow.steps)
+        if not step_name:
+            step_name = task.current_step_name or self._step_name(task.current_step, task.steps)
+        if step_name:
+            parts.append(f"当前步骤：{step_name}。")
+
+        if flow:
+            latest = self._latest_execution_for_task(task, flow)
+            if latest:
+                parts.append(self._format_execution_progress(latest))
+
+        if not parts:
+            parts.append("这个任务已记录，但还没有更多进度。")
+        return " ".join(parts)
+
+    def _build_task_flow_progress(
+        self,
+        task: TaskSnapshot,
+        flow: TaskFlowState,
+    ) -> str:
+        title = task.title or task.goal or task.task_id
+        parts = [f"{title} 当前状态：{task.status.value}。"]
+        if task.resume_summary:
+            parts.append(task.resume_summary)
+        step_name = self._step_name(flow.current_step, flow.steps)
+        if not step_name:
+            step_name = task.current_step_name or self._step_name(task.current_step, task.steps)
+        if step_name:
+            parts.append(f"当前步骤：{step_name}。")
+        latest = self._latest_execution_for_task(task, flow)
+        if latest:
+            parts.append(self._format_execution_progress(latest))
+        if len(parts) == 1:
+            parts.append("这个任务已记录，但还没有更多进度。")
+        return " ".join(parts)
+
+    def _step_name(self, current_step: str, steps: list[dict[str, Any]]) -> str:
+        if current_step:
+            current = next(
+                (step for step in steps if step.get("step_id") == current_step),
+                None,
+            )
+            if current:
+                return str(current.get("name") or current.get("step_id") or "")
+            return current_step
+        running = next(
+            (step for step in steps if step.get("status") == "running"),
+            None,
+        )
+        if running:
+            return str(running.get("name") or running.get("step_id") or "")
+        return ""
+
+    def _latest_execution_for_task(
+        self,
+        task: TaskSnapshot,
+        flow: TaskFlowState,
+    ) -> dict[str, Any] | None:
+        step_ids = self._task_step_ids(task)
+        scoped = []
+        for item in flow.execution_summary:
+            task_id = str(item.get("task_id") or "")
+            step_id = str(item.get("step_id") or "")
+            if task_id == task.task_id or (not task_id and step_id in step_ids):
+                scoped.append(item)
+        return scoped[-1] if scoped else None
+
+    def _format_execution_progress(self, item: dict[str, Any]) -> str:
+        label = item.get("tool") or item.get("action_id") or "unknown"
+        status = item.get("status") or "unknown"
+        return f"最近执行：{label}（{status}）。"
 
     async def _task_run_ids(self, session_id: str, task: TaskSnapshot) -> set[str]:
         run_ids = {

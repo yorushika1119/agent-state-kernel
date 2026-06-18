@@ -1065,3 +1065,36 @@ python -m pytest
 - `belief_items` 仍是旧主表，`claim_items` 已有 task_id 兼容层。
 - `progress_states` 仍是 session 级摘要；task-local progress 当前主要来自 task snapshot。
 - 后续如要继续收敛，可以考虑给 `progress_states` 或新版 `task_flow` 做更强 task-local 查询，而不是直接大改旧 progress 主表。
+
+## 2026-06-18 第十四阶段：task-local progress 读取层
+
+本阶段继续收敛多任务状态隔离，但没有大改 `progress_states` 主表。
+
+核心变化：
+- direct responder 新增 task-local progress builder。
+- 查询指定 task 的 progress 时，会先判断该 task 是否是 active task。
+- active task 继续使用当前 session progress / plan，同时读取属于该 task 的 `task_flow`。
+- 非 active task 优先使用属于该 task 的 `task_flow`；没有匹配的 `task_flow` 时回退到 `TaskSnapshot`。
+- task progress 中的 execution 摘要会按 `task_id` 过滤；历史旧数据没有 `task_id` 时再用 task step_id 兜底。
+- 查询任务 A 的 progress 不会混入任务 B 的步骤或执行摘要。
+
+新增测试覆盖：
+- 任务 A 被暂停后，查询 A 的 progress 仍返回 A snapshot 中的当前步骤。
+- 当前 active 任务 B 有自己的 plan / execution summary。
+- 查询任务 A 的 progress 不包含 B 的步骤或工具调用。
+- 查询 active B 的 task-local progress 可以返回 B 自己的步骤和最近执行。
+
+验证结果：
+
+```text
+python -m py_compile src\kms\kernel_direct_responder.py tests\test_task_directory_router.py
+pytest tests\test_task_directory_router.py
+9 passed
+pytest
+62 passed
+```
+
+当前边界：
+- `task_flows` 仍是 session 级兼容表，本阶段只做读取层隔离，不做表结构迁移。
+- 历史 execution 没有 `task_id` 时只能按 step_id 做有限 fallback。
+- router 对非常短的“那个进度”仍可能要求澄清，这是路由层问题，不在本阶段扩大处理。
