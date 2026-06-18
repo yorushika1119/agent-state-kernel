@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.kernel.engine import KernelEngine
 from src.kms.manager import KmsManager
 from src.kms.task_context_router import route_task_context
-from src.schema.events import EventSubmission
+from src.schema.events import EventSubmission, EventType
 from src.schema.state import GlobalTask, TaskStatus
 from src.stores.sqlite_store import SqliteStore
 
@@ -203,6 +203,180 @@ async def test_ambiguous_router_target_asks_clarification_without_interrupting()
             item for item in after_events if item["event_type"] == "RunInterrupted"
         ]
         assert len(after_interrupts) == len(before_interrupts)
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_kernel_response_uses_router_target_task_scope():
+    store, engine, manager = await build_runtime()
+    try:
+        first = await manager.dispatch_user_message(
+            text="请研究任务 A：支付 webhook 失败证据",
+            runtime_session_id="rt-router-direct-scope",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        ok, reason, _ = await engine.submit_event(
+            EventSubmission(
+                session_id=first.kernel_session_id,
+                component="thinker",
+                request_type="PlanProposed",
+                run_id=first.run_id,
+                intent_version=first.intent_version,
+                payload={
+                    "plan_id": "plan_task_a",
+                    "plan": {
+                        "steps": [
+                            {"step_id": "a_collect", "name": "收集 webhook 证据"},
+                        ]
+                    },
+                },
+            )
+        )
+        assert ok, reason
+        ok, reason, _ = await engine.submit_event(
+            EventSubmission(
+                session_id=first.kernel_session_id,
+                component="thinker",
+                request_type="ToolStarted",
+                run_id=first.run_id,
+                payload={
+                    "action_id": "act_a_fail",
+                    "step_id": "a_collect",
+                    "tool": "local.a",
+                    "input_summary": "读取 A 任务材料",
+                },
+            )
+        )
+        assert ok, reason
+        ok, reason, _ = await engine.submit_event(
+            EventSubmission(
+                session_id=first.kernel_session_id,
+                component="thinker",
+                request_type="ToolFailed",
+                run_id=first.run_id,
+                payload={
+                    "action_id": "act_a_fail",
+                    "tool": "local.a",
+                    "error": "A 任务文件不存在",
+                },
+            )
+        )
+        assert ok, reason
+        ok, reason, _ = await engine.submit_event(
+            EventSubmission(
+                session_id=first.kernel_session_id,
+                component="thinker",
+                request_type="EvidenceCandidateFound",
+                run_id=first.run_id,
+                intent_version=first.intent_version,
+                payload={
+                    "evidence_id": "ev_task_a",
+                    "evidence_type": "file",
+                    "source": "task-a.md",
+                    "title": "A 任务证据",
+                    "extracted_facts": ["webhook 失败证据属于任务 A。"],
+                    "reliability": "high",
+                },
+            )
+        )
+        assert ok, reason
+
+        second = await manager.dispatch_user_message(
+            text="这是一个新任务，请研究任务 B：向量索引故障",
+            runtime_session_id="rt-router-direct-scope",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        ok, reason, _ = await engine.submit_event(
+            EventSubmission(
+                session_id=second.kernel_session_id,
+                component="thinker",
+                request_type="ToolStarted",
+                run_id=second.run_id,
+                payload={
+                    "action_id": "act_b_fail",
+                    "tool": "local.b",
+                    "input_summary": "读取 B 任务材料",
+                },
+            )
+        )
+        assert ok, reason
+        ok, reason, _ = await engine.submit_event(
+            EventSubmission(
+                session_id=second.kernel_session_id,
+                component="thinker",
+                request_type="ToolFailed",
+                run_id=second.run_id,
+                payload={
+                    "action_id": "act_b_fail",
+                    "tool": "local.b",
+                    "error": "B 任务文件不存在",
+                },
+            )
+        )
+        assert ok, reason
+        ok, reason, _ = await engine.submit_event(
+            EventSubmission(
+                session_id=second.kernel_session_id,
+                component="thinker",
+                request_type="EvidenceCandidateFound",
+                run_id=second.run_id,
+                intent_version=second.intent_version,
+                payload={
+                    "evidence_id": "ev_task_b",
+                    "evidence_type": "file",
+                    "source": "task-b.md",
+                    "title": "B 任务证据",
+                    "extracted_facts": ["向量索引故障属于任务 B。"],
+                    "reliability": "high",
+                },
+            )
+        )
+        assert ok, reason
+
+        evidence_reply = await manager.dispatch_user_message(
+            text="支付 webhook 那个有什么证据？",
+            runtime_session_id="rt-router-direct-scope",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        assert evidence_reply.action == "respond_from_kernel"
+        assert evidence_reply.task_id == first.task_id
+        assert evidence_reply.run_id == second.run_id
+        assert "ev_task_a" in evidence_reply.kernel_response
+        assert "ev_task_b" not in evidence_reply.kernel_response
+
+        failure_reply = await manager.dispatch_user_message(
+            text="支付 webhook 那个哪里失败了？",
+            runtime_session_id="rt-router-direct-scope",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        assert failure_reply.action == "respond_from_kernel"
+        assert failure_reply.task_id == first.task_id
+        assert "local.a" in failure_reply.kernel_response
+        assert "local.b" not in failure_reply.kernel_response
+
+        progress_reply = await manager.dispatch_user_message(
+            text="支付 webhook 那个当前进度？",
+            runtime_session_id="rt-router-direct-scope",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        assert progress_reply.action == "respond_from_kernel"
+        assert progress_reply.task_id == first.task_id
+        assert "收集 webhook 证据" in progress_reply.kernel_response
+
+        thinker = await engine.get_thinker_view(second.kernel_session_id)
+        assert thinker["cancellation"]["active_run_id"] == second.run_id
+        assert thinker["cancellation"]["active_task_id"] == second.task_id
+        events = await store.get_events(second.kernel_session_id, limit=100)
+        interrupted = [
+            event for event in events if event["event_type"] == EventType.RUN_INTERRUPTED.value
+        ]
+        assert len(interrupted) == 1
     finally:
         await store.close()
 

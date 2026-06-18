@@ -106,8 +106,18 @@ class KmsManager:
                 active=active,
             )
 
-    async def _build_kernel_direct_response(self, session_id: str, kind: str = "progress") -> str:
-        return await self.direct_responder.build_response(session_id, kind)
+    async def _build_kernel_direct_response(
+        self,
+        session_id: str,
+        kind: str = "progress",
+        *,
+        target_task_id: str = "",
+    ) -> str:
+        return await self.direct_responder.build_response(
+            session_id,
+            kind,
+            target_task_id=target_task_id,
+        )
 
     def _build_route_clarification_response(self, route) -> str:
         question = route.clarification_question or "你指的是哪一个任务？"
@@ -211,9 +221,15 @@ class KmsManager:
             )
 
         if session and wants_kernel_response:
+            response_task_id = (
+                route.target_task_id
+                if route.routing_decision == "select_existing" and route.target_task_id
+                else session.active_task_id or ""
+            )
             kernel_response = await self._build_kernel_direct_response(
                 session.kernel_session_id,
                 intent.kernel_answer_kind or "progress",
+                target_task_id=response_task_id,
             )
             return DispatchDecision(
                 action="respond_from_kernel",
@@ -223,7 +239,7 @@ class KmsManager:
                 session_status=session.status.value,
                 reason=intent.reason or "kernel_direct_status_reply",
                 task_action="respond_from_kernel",
-                task_id=session.active_task_id or "",
+                task_id=response_task_id,
                 requires_thinker=False,
                 kernel_response=kernel_response,
                 user_session_id=user_session.user_session_id,

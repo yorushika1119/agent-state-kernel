@@ -240,6 +240,18 @@ def route_task_context(
         )
 
     if _contains_any(content, STATUS_QUERY_REFERENCES):
+        second_score = ranked[1][0] if len(ranked) > 1 else 0.0
+        if best[0] >= 0.45 and best[0] - second_score >= 0.12:
+            return _select(
+                content,
+                user_session_id=user_session_id,
+                runtime_session_id=runtime_session_id,
+                task=best[2],
+                confidence=best[0],
+                matched_hints=best[1],
+                ranked=ranked,
+                time_reason={"reference": "status_query", "matched_by": "task_score"},
+            )
         active = _single_active_task(candidates)
         if active:
             return _select(
