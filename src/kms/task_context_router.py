@@ -107,6 +107,9 @@ STOPWORDS = {
 ALLOWED_ROUTING_DECISIONS = {"select_existing", "create_new", "ask_clarification"}
 ROUTE_FAST_PATH_CONFIDENCE = 0.75
 LLM_ROUTE_MIN_CONFIDENCE = 0.65
+LLM_SELECT_WITH_WEAK_TASK_SCORE_MIN_CONFIDENCE = 0.8
+LLM_CREATE_NEW_MIN_CONFIDENCE = 0.72
+LLM_CLARIFICATION_MIN_CONFIDENCE = 0.55
 
 TASK_ROUTE_SYSTEM = """You route a user message to an existing task or a new task.
 
@@ -391,8 +394,10 @@ async def route_task_context_with_llm(
         rule_route=rule_route,
         model_call=model_call,
     )
-    if llm_route is None or llm_route.confidence < LLM_ROUTE_MIN_CONFIDENCE:
+    accepted, reason = _accept_llm_route(rule_route, llm_route)
+    if not accepted:
         return rule_route
+    llm_route.time_reason["acceptance_reason"] = reason
     return llm_route
 
 
@@ -573,6 +578,58 @@ def _route_summary(route: TaskRouteDecision) -> dict[str, Any]:
         "matched_hints": route.matched_hints,
         "time_reason": route.time_reason,
     }
+
+
+def _accept_llm_route(
+    rule_route: TaskRouteDecision,
+    llm_route: TaskRouteDecision | None,
+) -> tuple[bool, str]:
+    if llm_route is None:
+        return False, "missing_llm_route"
+    if llm_route.confidence < LLM_ROUTE_MIN_CONFIDENCE:
+        return False, "llm_confidence_below_min"
+
+    if llm_route.routing_decision == "ask_clarification":
+        if llm_route.confidence >= LLM_CLARIFICATION_MIN_CONFIDENCE:
+            return True, "llm_requested_clarification"
+        return False, "llm_clarification_confidence_below_min"
+
+    if rule_route.routing_decision == llm_route.routing_decision:
+        if llm_route.routing_decision != "select_existing":
+            return True, "llm_agrees_with_rule_decision"
+        if rule_route.target_task_id == llm_route.target_task_id:
+            return True, "llm_agrees_with_rule_target"
+
+    if llm_route.routing_decision == "select_existing":
+        selected = _candidate_by_task_id(llm_route.candidate_tasks, llm_route.target_task_id)
+        selected_score = float(selected.get("score") or 0.0) if selected else 0.0
+        if selected_score >= 0.45:
+            return True, "llm_target_has_rule_support"
+        if (
+            rule_route.needs_user_clarification
+            and llm_route.confidence >= LLM_SELECT_WITH_WEAK_TASK_SCORE_MIN_CONFIDENCE
+        ):
+            return True, "llm_resolved_rule_clarification"
+        return False, "llm_select_lacks_rule_support"
+
+    if llm_route.routing_decision == "create_new":
+        if (
+            rule_route.routing_decision == "create_new"
+            and llm_route.confidence >= LLM_ROUTE_MIN_CONFIDENCE
+        ):
+            return True, "llm_agrees_with_create_new"
+        if llm_route.confidence >= LLM_CREATE_NEW_MIN_CONFIDENCE:
+            return True, "llm_create_new_high_confidence"
+        return False, "llm_create_new_confidence_below_min"
+
+    return False, "unsupported_llm_route"
+
+
+def _candidate_by_task_id(candidate_tasks: list[dict[str, Any]], task_id: str) -> dict[str, Any] | None:
+    return next(
+        (item for item in candidate_tasks if str(item.get("task_id") or "") == task_id),
+        None,
+    )
 
 
 def _clamp_confidence(value: Any) -> float:

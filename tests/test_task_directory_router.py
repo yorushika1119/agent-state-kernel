@@ -10,7 +10,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.kernel.engine import KernelEngine
 from src.kms.manager import KmsManager
-from src.kms.task_context_router import route_task_context, route_task_context_with_llm
+from src.kms.task_context_router import (
+    _accept_llm_route,
+    route_task_context,
+    route_task_context_with_llm,
+)
 from src.schema.events import EventSubmission, EventType
 from src.schema.state import (
     BeliefItem,
@@ -18,6 +22,7 @@ from src.schema.state import (
     Commitment,
     CommitmentStatus,
     GlobalTask,
+    TaskRouteDecision,
     TaskStatus,
 )
 from src.stores.sqlite_store import SqliteStore
@@ -629,6 +634,7 @@ async def test_llm_router_selects_existing_task_when_rule_route_is_ambiguous():
     assert route.target_task_id == "task_a"
     assert route.matched_hints == ["llm_router"]
     assert route.time_reason["source"] == "llm_router"
+    assert route.time_reason["acceptance_reason"] == "llm_resolved_rule_clarification"
     assert model.calls == 1
 
 
@@ -672,6 +678,114 @@ async def test_llm_router_falls_back_when_target_task_is_invalid():
     assert route.routing_decision == "ask_clarification"
     assert route.needs_user_clarification is True
     assert model.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_router_rejects_weak_select_without_rule_support():
+    task_a = GlobalTask(
+        task_id="task_a",
+        kernel_session_id="ask_a",
+        user_session_id="us_1",
+        title="payment webhook retry policy",
+        task_description="fix webhook retries and idempotency handling",
+        routing_hints=["payment", "webhook", "retry"],
+        last_user_touch_at=datetime(2026, 6, 18, 10, 0, tzinfo=timezone.utc),
+    )
+    task_b = GlobalTask(
+        task_id="task_b",
+        kernel_session_id="ask_b",
+        user_session_id="us_1",
+        title="vector search index migration",
+        task_description="migrate embeddings index and query path",
+        routing_hints=["vector", "search", "index"],
+        last_user_touch_at=datetime(2026, 6, 18, 11, 0, tzinfo=timezone.utc),
+    )
+    model = FakeRouteModel(
+        {
+            "routing_decision": "select_existing",
+            "target_task_id": "task_a",
+            "confidence": 0.7,
+            "reason": "weak guess",
+        }
+    )
+
+    route = await route_task_context_with_llm(
+        "那个 integration 任务现在怎么样？",
+        user_session_id="us_1",
+        runtime_session_id="rt",
+        tasks=[task_b, task_a],
+        model_call=model,
+    )
+
+    assert route.routing_decision == "ask_clarification"
+    assert route.needs_user_clarification is True
+    assert route.time_reason == {}
+    assert model.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_router_accepts_select_when_it_agrees_with_rule_target():
+    task_a = GlobalTask(
+        task_id="task_a",
+        kernel_session_id="ask_a",
+        user_session_id="us_1",
+        title="payment webhook retry policy",
+        task_description="fix webhook retries and idempotency handling",
+        routing_hints=["payment", "webhook", "retry"],
+        last_user_touch_at=datetime(2026, 6, 18, 10, 0, tzinfo=timezone.utc),
+    )
+    task_b = GlobalTask(
+        task_id="task_b",
+        kernel_session_id="ask_b",
+        user_session_id="us_1",
+        title="vector search index migration",
+        task_description="migrate embeddings index and query path",
+        routing_hints=["vector", "search", "index"],
+        last_user_touch_at=datetime(2026, 6, 18, 11, 0, tzinfo=timezone.utc),
+    )
+    model = FakeRouteModel(
+        {
+            "routing_decision": "select_existing",
+            "target_task_id": "task_a",
+            "confidence": 0.68,
+            "reason": "rule score supports webhook task",
+        }
+    )
+
+    route = await route_task_context_with_llm(
+        "webhook integration 那个现在怎么样？",
+        user_session_id="us_1",
+        runtime_session_id="rt",
+        tasks=[task_b, task_a],
+        model_call=model,
+    )
+
+    assert route.routing_decision == "select_existing"
+    assert route.target_task_id == "task_a"
+    assert route.time_reason["acceptance_reason"] == "llm_agrees_with_rule_target"
+    assert model.calls == 1
+
+
+def test_llm_route_acceptance_allows_rule_supported_target():
+    rule_route = TaskRouteDecision(
+        routing_decision="ask_clarification",
+        confidence=0.35,
+        needs_user_clarification=True,
+    )
+    llm_route = TaskRouteDecision(
+        routing_decision="select_existing",
+        target_task_id="task_a",
+        confidence=0.68,
+        candidate_tasks=[
+            {"task_id": "task_a", "score": 0.48},
+            {"task_id": "task_b", "score": 0.31},
+        ],
+    )
+
+    accepted, reason = _accept_llm_route(rule_route, llm_route)
+
+    assert accepted is True
+    assert reason == "llm_target_has_rule_support"
 
 
 @pytest.mark.asyncio
