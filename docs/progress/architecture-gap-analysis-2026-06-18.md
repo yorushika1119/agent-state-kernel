@@ -1098,3 +1098,39 @@ pytest
 - `task_flows` 仍是 session 级兼容表，本阶段只做读取层隔离，不做表结构迁移。
 - 历史 execution 没有 `task_id` 时只能按 step_id 做有限 fallback。
 - router 对非常短的“那个进度”仍可能要求澄清，这是路由层问题，不在本阶段扩大处理。
+
+## 2026-06-18 第十五阶段：task-local claim / todo 查询
+
+本阶段继续收敛多任务可查询能力，不改旧主表结构。
+
+核心变化：
+- direct responder 新增 `claims` 回答类型。
+- direct responder 新增 `todos` 回答类型。
+- 查询指定 task 的 claims 时，优先按 `claim_items.task_id` 过滤。
+- 查询指定 task 的 todos 时，优先按 `todo_obligations.task_id` 过滤。
+- 历史旧数据没有 `task_id` 时，claims / todos 会尝试用 task event payload 做有限 fallback。
+- intent classifier 现在能把“结论 / 风险 / 待办 / 待确认”识别成 kernel 可直接回答的问题。
+- 移除了过宽的“判断”单词匹配，避免把“我想判断材料是否足够”误判为 claims 查询。
+
+新增测试覆盖：
+- A/B 两个任务分别写入 claim 和 todo。
+- `claim_items` / `todo_obligations` 会绑定对应 task_id。
+- 查询任务 A 的 claims 不混入任务 B。
+- 查询任务 A 的 todos 不混入任务 B。
+- 查询 active B 的 claims / todos 只返回 B 自己的内容。
+- intent classifier 能识别 claims / todos，同时保留复杂材料判断问题的 LLM fallback。
+
+验证结果：
+
+```text
+python -m py_compile src\kms\intent_classifier.py src\kms\kernel_direct_responder.py tests\test_intent_classifier.py tests\test_task_directory_router.py
+pytest tests\test_intent_classifier.py tests\test_task_directory_router.py
+15 passed
+pytest
+63 passed
+```
+
+当前边界：
+- `belief_items` / `commitments` 仍是旧 session 级主表，task-local 查询主要依赖 `claim_items` / `todo_obligations` 影子表。
+- legacy fallback 只能覆盖带 task/run 线索的旧事件，无法百分百还原所有历史归属。
+- 本阶段按用户要求不上传 GitHub；本地提交后仍需等网络恢复再统一 push。

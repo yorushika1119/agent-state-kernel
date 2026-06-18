@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.kms.intent_classifier import (
     classify_dispatch_intent,
@@ -36,6 +40,16 @@ def test_rule_fast_path_classifies_clear_progress_query():
     assert intent.intent == "kernel_answerable_query"
     assert intent.kernel_answer_kind == "progress"
     assert intent.source == "rule"
+
+
+def test_rule_fast_path_classifies_claim_and_todo_queries():
+    claims = classify_dispatch_intent("这个任务目前有什么结论？", session=active_session())
+    todos = classify_dispatch_intent("这个任务还有什么待办？", session=active_session())
+
+    assert claims.intent == "kernel_answerable_query"
+    assert claims.kernel_answer_kind == "claims"
+    assert todos.intent == "kernel_answerable_query"
+    assert todos.kernel_answer_kind == "todos"
 
 
 @pytest.mark.asyncio

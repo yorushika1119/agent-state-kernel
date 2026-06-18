@@ -12,7 +12,14 @@ from src.kernel.engine import KernelEngine
 from src.kms.manager import KmsManager
 from src.kms.task_context_router import route_task_context
 from src.schema.events import EventSubmission, EventType
-from src.schema.state import GlobalTask, TaskStatus
+from src.schema.state import (
+    BeliefItem,
+    BeliefStatus,
+    Commitment,
+    CommitmentStatus,
+    GlobalTask,
+    TaskStatus,
+)
 from src.stores.sqlite_store import SqliteStore
 
 
@@ -282,6 +289,24 @@ async def test_direct_kernel_response_uses_router_target_task_scope():
             )
         )
         assert ok, reason
+        await store.save_belief(
+            first.kernel_session_id,
+            BeliefItem(
+                belief_id="claim_task_a",
+                claim="支付 webhook 失败来自签名校验",
+                status=BeliefStatus.VERIFIED,
+                confidence=0.92,
+            ),
+        )
+        await store.save_commitment(
+            first.kernel_session_id,
+            Commitment(
+                commitment_id="todo_task_a",
+                statement="补充支付 webhook 重试策略",
+                status=CommitmentStatus.PENDING,
+                requires_confirmation=True,
+            ),
+        )
 
         second = await manager.dispatch_user_message(
             text="这是一个新任务，请研究任务 B：向量索引故障",
@@ -354,6 +379,24 @@ async def test_direct_kernel_response_uses_router_target_task_scope():
             )
         )
         assert ok, reason
+        await store.save_belief(
+            second.kernel_session_id,
+            BeliefItem(
+                belief_id="claim_task_b",
+                claim="向量索引故障来自维度不匹配",
+                status=BeliefStatus.LIKELY,
+                confidence=0.66,
+            ),
+        )
+        await store.save_commitment(
+            second.kernel_session_id,
+            Commitment(
+                commitment_id="todo_task_b",
+                statement="确认向量索引维度迁移方案",
+                status=CommitmentStatus.PENDING,
+                requires_confirmation=True,
+            ),
+        )
 
         evidence_by_id = {
             item.evidence_id: item
@@ -367,6 +410,18 @@ async def test_direct_kernel_response_uses_router_target_task_scope():
         assert evidence_by_id["ev_task_b"].task_id == second.task_id
         assert executions_by_id["act_a_fail"].task_id == first.task_id
         assert executions_by_id["act_b_fail"].task_id == second.task_id
+        claims_by_id = {
+            item.claim_id: item
+            for item in await store.get_claim_items(first.kernel_session_id)
+        }
+        todos_by_id = {
+            item.obligation_id: item
+            for item in await store.get_todo_obligations(first.kernel_session_id)
+        }
+        assert claims_by_id["claim_task_a"].task_id == first.task_id
+        assert claims_by_id["claim_task_b"].task_id == second.task_id
+        assert todos_by_id["todo_task_a"].task_id == first.task_id
+        assert todos_by_id["todo_task_b"].task_id == second.task_id
 
         thinker_view = await engine.get_thinker_view(first.kernel_session_id)
         thinker_evidence_by_id = {
@@ -417,6 +472,28 @@ async def test_direct_kernel_response_uses_router_target_task_scope():
         assert "迁移向量索引" not in progress_reply.kernel_response
         assert "local.b" not in progress_reply.kernel_response
 
+        claims_reply = await manager.dispatch_user_message(
+            text="支付 webhook 那个有什么结论？",
+            runtime_session_id="rt-router-direct-scope",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        assert claims_reply.action == "respond_from_kernel"
+        assert claims_reply.task_id == first.task_id
+        assert "支付 webhook 失败来自签名校验" in claims_reply.kernel_response
+        assert "向量索引故障来自维度不匹配" not in claims_reply.kernel_response
+
+        todo_reply = await manager.dispatch_user_message(
+            text="支付 webhook 那个还有什么待办？",
+            runtime_session_id="rt-router-direct-scope",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        assert todo_reply.action == "respond_from_kernel"
+        assert todo_reply.task_id == first.task_id
+        assert "补充支付 webhook 重试策略" in todo_reply.kernel_response
+        assert "确认向量索引维度迁移方案" not in todo_reply.kernel_response
+
         active_progress = await manager.direct_responder.build_response(
             second.kernel_session_id,
             "progress",
@@ -426,6 +503,20 @@ async def test_direct_kernel_response_uses_router_target_task_scope():
         assert "local.b" in active_progress
         assert "收集 webhook 证据" not in active_progress
         assert "local.a" not in active_progress
+        active_claims = await manager.direct_responder.build_response(
+            second.kernel_session_id,
+            "claims",
+            target_task_id=second.task_id,
+        )
+        assert "向量索引故障来自维度不匹配" in active_claims
+        assert "支付 webhook 失败来自签名校验" not in active_claims
+        active_todos = await manager.direct_responder.build_response(
+            second.kernel_session_id,
+            "todos",
+            target_task_id=second.task_id,
+        )
+        assert "确认向量索引维度迁移方案" in active_todos
+        assert "补充支付 webhook 重试策略" not in active_todos
 
         thinker = await engine.get_thinker_view(second.kernel_session_id)
         assert thinker["cancellation"]["active_run_id"] == second.run_id

@@ -6,7 +6,15 @@ import json
 from typing import Any
 
 from src.schema.events import EventType
-from src.schema.state import ExecutionAction, EvidenceItem, TaskFlowState, TaskSnapshot, TaskStatus
+from src.schema.state import (
+    ClaimItem,
+    ExecutionAction,
+    EvidenceItem,
+    TaskFlowState,
+    TaskSnapshot,
+    TaskStatus,
+    TodoObligation,
+)
 
 
 class KernelDirectResponder:
@@ -59,6 +67,45 @@ class KernelDirectResponder:
                 for item in latest
             ]
             return "当前已有证据：" + "；".join(parts)
+
+        if kind == "claims":
+            claims = [
+                item
+                for item in await self.store.get_claim_items(session_id)
+                if item.visibility != "private"
+            ]
+            if task_scoped:
+                claims = await self._filter_claims_for_task(
+                    session_id,
+                    claims,
+                    target_task,
+                )
+            if not claims:
+                return "当前还没有记录到结论或风险。"
+            return "当前记录的判断：" + "；".join(
+                self._format_claim(item)
+                for item in claims[-3:]
+            )
+
+        if kind == "todos":
+            todos = await self.store.get_todo_obligations(session_id)
+            if task_scoped:
+                todos = await self._filter_todos_for_task(
+                    session_id,
+                    todos,
+                    target_task,
+                )
+            pending = [
+                item
+                for item in todos
+                if item.status.value == "pending" or item.requires_confirmation
+            ]
+            if not pending:
+                return "当前没有待办或待确认事项。"
+            return "当前待办：" + "；".join(
+                self._format_todo(item)
+                for item in pending[-3:]
+            )
 
         if kind == "resume":
             tasks = await self.store.list_tasks(session_id)
@@ -240,6 +287,13 @@ class KernelDirectResponder:
         status = item.get("status") or "unknown"
         return f"最近执行：{label}（{status}）。"
 
+    def _format_claim(self, item: ClaimItem) -> str:
+        return f"{item.claim_id}: {item.claim}（{item.status.value}，{item.confidence:.2f}）"
+
+    def _format_todo(self, item: TodoObligation) -> str:
+        marker = "，需要确认" if item.requires_confirmation else ""
+        return f"{item.obligation_id}: {item.statement}（{item.status.value}{marker}）"
+
     async def _task_run_ids(self, session_id: str, task: TaskSnapshot) -> set[str]:
         run_ids = {
             item
@@ -317,6 +371,64 @@ class KernelDirectResponder:
             if payload.get("evidence_id")
         )
         return native + [item for item in legacy if item.evidence_id in evidence_ids]
+
+    async def _filter_claims_for_task(
+        self,
+        session_id: str,
+        claims: list[ClaimItem],
+        task: TaskSnapshot,
+    ) -> list[ClaimItem]:
+        native = [item for item in claims if item.task_id == task.task_id]
+        legacy = [item for item in claims if not item.task_id]
+        payloads = await self._task_event_payloads(
+            session_id,
+            task,
+            {
+                EventType.BELIEF_PROPOSED.value,
+                EventType.BELIEF_UPDATED.value,
+                EventType.RISK_ASSESSMENT.value,
+                EventType.CONFLICT_DETECTED.value,
+                EventType.VERIFICATION_WARNING_RAISED.value,
+                EventType.VERIFICATION_RESULT.value,
+            },
+        )
+        claim_ids = {
+            str(
+                payload.get("claim_id")
+                or payload.get("belief_id")
+                or payload.get("assessment_id")
+                or ""
+            )
+            for payload in payloads
+        }
+        return native + [item for item in legacy if item.claim_id in claim_ids]
+
+    async def _filter_todos_for_task(
+        self,
+        session_id: str,
+        todos: list[TodoObligation],
+        task: TaskSnapshot,
+    ) -> list[TodoObligation]:
+        native = [item for item in todos if item.task_id == task.task_id]
+        legacy = [item for item in todos if not item.task_id]
+        payloads = await self._task_event_payloads(
+            session_id,
+            task,
+            {
+                EventType.COMMITMENT_CREATED.value,
+                EventType.COMMITMENT_UPDATED.value,
+                EventType.USER_CONFIRMATION_REQUIRED.value,
+            },
+        )
+        obligation_ids = {
+            str(payload.get("obligation_id") or payload.get("commitment_id") or "")
+            for payload in payloads
+        }
+        return native + [
+            item
+            for item in legacy
+            if item.obligation_id in obligation_ids
+        ]
 
     async def _filter_executions_for_task(
         self,

@@ -83,6 +83,41 @@ KERNEL_EVIDENCE_QUERY_MARKERS = (
     "sources",
 )
 
+KERNEL_CLAIM_QUERY_MARKERS = (
+    "有什么结论",
+    "当前结论",
+    "目前结论",
+    "形成了什么判断",
+    "有哪些判断",
+    "有什么风险",
+    "当前风险",
+    "目前风险",
+    "风险是什么",
+    "结论",
+    "风险",
+    "claims",
+    "claim",
+    "risks",
+    "risk",
+)
+
+KERNEL_TODO_QUERY_MARKERS = (
+    "还有什么待办",
+    "当前待办",
+    "目前待办",
+    "待确认",
+    "需要确认",
+    "需要我确认",
+    "还要做什么",
+    "还有什么要做",
+    "下一步要做什么",
+    "待办",
+    "todo",
+    "todos",
+    "pending confirmation",
+    "commitment",
+)
+
 KERNEL_RESUME_QUERY_MARKERS = (
     "还能继续吗",
     "可以继续吗",
@@ -142,6 +177,8 @@ ALLOWED_KERNEL_ANSWER_KINDS = {
     "progress",
     "failures",
     "evidence",
+    "claims",
+    "todos",
     "resume",
     "run",
 }
@@ -155,12 +192,12 @@ Return JSON only:
 {
   "intent": "kernel_answerable_query | new_task | resume_previous_task | same_task_steer | unrelated_chat | uncertain",
   "confidence": 0.0-1.0,
-  "kernel_answer_kind": "progress | failures | evidence | resume | run |",
+  "kernel_answer_kind": "progress | failures | evidence | claims | todos | resume | run |",
   "reason": "short reason"
 }
 
 Definitions:
-- kernel_answerable_query: user asks about current status, progress, failures, evidence, active run, or resumable tasks already known by kernel.
+- kernel_answerable_query: user asks about current status, progress, failures, evidence, claims, todos, active run, or resumable tasks already known by kernel.
 - new_task: user wants to switch to a different task or asks an unrelated work request.
 - resume_previous_task: user explicitly wants to continue a paused/previous task.
 - same_task_steer: user adds constraints or changes format for the active task.
@@ -251,6 +288,22 @@ def classify_dispatch_intent(
                 source="rule",
                 reason="kernel_evidence_query_marker",
                 kernel_answer_kind="evidence",
+            )
+        if _contains_any(content, KERNEL_CLAIM_QUERY_MARKERS):
+            return DispatchIntent(
+                intent="kernel_answerable_query",
+                confidence=0.9,
+                source="rule",
+                reason="kernel_claim_query_marker",
+                kernel_answer_kind="claims",
+            )
+        if _contains_any(content, KERNEL_TODO_QUERY_MARKERS):
+            return DispatchIntent(
+                intent="kernel_answerable_query",
+                confidence=0.9,
+                source="rule",
+                reason="kernel_todo_query_marker",
+                kernel_answer_kind="todos",
             )
         if _contains_any(content, KERNEL_RESUME_QUERY_MARKERS):
             return DispatchIntent(
