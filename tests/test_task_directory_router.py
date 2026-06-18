@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.kernel.engine import KernelEngine
 from src.kms.manager import KmsManager
-from src.kms.task_context_router import route_task_context
+from src.kms.task_context_router import route_task_context, route_task_context_with_llm
 from src.schema.events import EventSubmission, EventType
 from src.schema.state import (
     BeliefItem,
@@ -29,6 +29,16 @@ async def build_runtime():
     engine = KernelEngine(store)
     manager = KmsManager(store, engine)
     return store, engine, manager
+
+
+class FakeRouteModel:
+    def __init__(self, result):
+        self.result = result
+        self.calls = 0
+
+    async def ask_json(self, system: str, user: str, max_tokens: int = 200):
+        self.calls += 1
+        return self.result
 
 
 @pytest.mark.asyncio
@@ -576,6 +586,124 @@ def test_task_context_router_selects_by_recent_other_and_hints():
     )
     assert unclear.routing_decision == "ask_clarification"
     assert unclear.needs_user_clarification is True
+
+
+@pytest.mark.asyncio
+async def test_llm_router_selects_existing_task_when_rule_route_is_ambiguous():
+    task_a = GlobalTask(
+        task_id="task_a",
+        kernel_session_id="ask_a",
+        user_session_id="us_1",
+        title="payment webhook retry policy",
+        task_description="fix webhook retries and idempotency handling",
+        routing_hints=["payment", "webhook", "retry"],
+        last_user_touch_at=datetime(2026, 6, 18, 10, 0, tzinfo=timezone.utc),
+    )
+    task_b = GlobalTask(
+        task_id="task_b",
+        kernel_session_id="ask_b",
+        user_session_id="us_1",
+        title="vector search index migration",
+        task_description="migrate embeddings index and query path",
+        routing_hints=["vector", "search", "index"],
+        last_user_touch_at=datetime(2026, 6, 18, 11, 0, tzinfo=timezone.utc),
+    )
+    model = FakeRouteModel(
+        {
+            "routing_decision": "select_existing",
+            "target_task_id": "task_a",
+            "confidence": 0.82,
+            "reason": "用户说 integration 指的是 webhook 集成任务",
+        }
+    )
+
+    route = await route_task_context_with_llm(
+        "那个 integration 任务现在怎么样？",
+        user_session_id="us_1",
+        runtime_session_id="rt",
+        tasks=[task_b, task_a],
+        model_call=model,
+    )
+
+    assert route.routing_decision == "select_existing"
+    assert route.target_task_id == "task_a"
+    assert route.matched_hints == ["llm_router"]
+    assert route.time_reason["source"] == "llm_router"
+    assert model.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_router_falls_back_when_target_task_is_invalid():
+    task_a = GlobalTask(
+        task_id="task_a",
+        kernel_session_id="ask_a",
+        user_session_id="us_1",
+        title="payment webhook retry policy",
+        task_description="fix webhook retries and idempotency handling",
+        routing_hints=["payment", "webhook", "retry"],
+        last_user_touch_at=datetime(2026, 6, 18, 10, 0, tzinfo=timezone.utc),
+    )
+    task_b = GlobalTask(
+        task_id="task_b",
+        kernel_session_id="ask_b",
+        user_session_id="us_1",
+        title="vector search index migration",
+        task_description="migrate embeddings index and query path",
+        routing_hints=["vector", "search", "index"],
+        last_user_touch_at=datetime(2026, 6, 18, 11, 0, tzinfo=timezone.utc),
+    )
+    model = FakeRouteModel(
+        {
+            "routing_decision": "select_existing",
+            "target_task_id": "task_missing",
+            "confidence": 0.95,
+            "reason": "invalid target",
+        }
+    )
+
+    route = await route_task_context_with_llm(
+        "那个 integration 任务现在怎么样？",
+        user_session_id="us_1",
+        runtime_session_id="rt",
+        tasks=[task_b, task_a],
+        model_call=model,
+    )
+
+    assert route.routing_decision == "ask_clarification"
+    assert route.needs_user_clarification is True
+    assert model.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_router_does_not_run_for_rule_fast_path():
+    task_a = GlobalTask(
+        task_id="task_a",
+        kernel_session_id="ask_a",
+        user_session_id="us_1",
+        title="payment webhook retry policy",
+        task_description="fix webhook retries and idempotency handling",
+        routing_hints=["payment", "webhook", "retry"],
+    )
+    model = FakeRouteModel(
+        {
+            "routing_decision": "select_existing",
+            "target_task_id": "task_a",
+            "confidence": 0.99,
+            "reason": "should not be used",
+        }
+    )
+
+    route = await route_task_context_with_llm(
+        "new task: write a release note",
+        user_session_id="us_1",
+        runtime_session_id="rt",
+        tasks=[task_a],
+        model_call=model,
+    )
+
+    assert route.routing_decision == "create_new"
+    assert route.time_reason["reference"] == "new_task"
+    assert model.calls == 0
 
 
 def test_task_context_router_handles_new_task_status_and_token_overlap():

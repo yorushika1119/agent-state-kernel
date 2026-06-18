@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -10,7 +11,7 @@ from src.kms.dispatch_context import build_kernel_dispatch_context
 from src.kms.intent_classifier import classify_dispatch_intent_with_llm
 from src.kms.kernel_direct_responder import KernelDirectResponder
 from src.kms.task_coordinators import InterruptCoordinator, ResumeCoordinator
-from src.kms.task_context_router import route_task_context
+from src.kms.task_context_router import route_task_context_with_llm
 from src.schema.events import EventSubmission, EventType
 from src.schema.state import TaskSnapshot, TaskStatus
 
@@ -36,12 +37,17 @@ class DispatchDecision:
 class KmsManager:
     """Owns runtime-level user message dispatch and interrupt decisions."""
 
-    def __init__(self, store, engine):
+    def __init__(self, store, engine, *, enable_llm_router: bool | None = None):
         self.store = store
         self.engine = engine
         self.direct_responder = KernelDirectResponder(store, engine)
         self.interrupts = InterruptCoordinator(store)
         self.resumes = ResumeCoordinator(store)
+        self.enable_llm_router = (
+            os.getenv("KMS_ENABLE_LLM_ROUTER") == "1"
+            if enable_llm_router is None
+            else enable_llm_router
+        )
 
     async def _find_target_session(
         self,
@@ -161,11 +167,12 @@ class KmsManager:
         global_tasks = await self.store.list_global_tasks(
             user_session_id=user_session.user_session_id,
         )
-        route = route_task_context(
+        route = await route_task_context_with_llm(
             text,
             user_session_id=user_session.user_session_id,
             runtime_session_id=runtime_session_id,
             tasks=global_tasks,
+            enable_llm=self.enable_llm_router,
         )
         await self.store.save_task_route_decision(route)
         route_target_task = next(

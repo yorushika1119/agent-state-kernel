@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable
+from typing import Any, Iterable
 
 from src.schema.state import GlobalTask, TaskRouteDecision, TaskStatus
 
@@ -103,6 +103,28 @@ STOPWORDS = {
     "fix",
     "create",
 }
+
+ALLOWED_ROUTING_DECISIONS = {"select_existing", "create_new", "ask_clarification"}
+ROUTE_FAST_PATH_CONFIDENCE = 0.75
+LLM_ROUTE_MIN_CONFIDENCE = 0.65
+
+TASK_ROUTE_SYSTEM = """You route a user message to an existing task or a new task.
+
+Return JSON only:
+{
+  "routing_decision": "select_existing | create_new | ask_clarification",
+  "target_task_id": "task id when selecting existing, otherwise empty",
+  "confidence": 0.0-1.0,
+  "clarification_question": "short question when clarification is needed",
+  "reason": "short reason"
+}
+
+Rules:
+- select_existing only when one candidate clearly matches the user's reference.
+- create_new when the user is asking for unrelated new work.
+- ask_clarification when more than one candidate is plausible.
+- target_task_id must be one of the candidate task ids.
+- Do not decide whether to interrupt or execute. Only route task context."""
 
 
 def _normalize(text: str) -> str:
@@ -335,6 +357,131 @@ def route_task_context(
     )
 
 
+async def route_task_context_with_llm(
+    text: str,
+    *,
+    user_session_id: str = "",
+    runtime_session_id: str = "",
+    tasks: list[GlobalTask] | None = None,
+    model_call: Any = None,
+    enable_llm: bool = True,
+) -> TaskRouteDecision:
+    rule_route = route_task_context(
+        text,
+        user_session_id=user_session_id,
+        runtime_session_id=runtime_session_id,
+        tasks=tasks,
+    )
+    candidates = tasks or []
+    if (
+        not enable_llm
+        or not candidates
+        or (
+            rule_route.confidence >= ROUTE_FAST_PATH_CONFIDENCE
+            and not rule_route.needs_user_clarification
+        )
+    ):
+        return rule_route
+
+    llm_route = await llm_route_task_context(
+        text,
+        user_session_id=user_session_id,
+        runtime_session_id=runtime_session_id,
+        tasks=candidates,
+        rule_route=rule_route,
+        model_call=model_call,
+    )
+    if llm_route is None or llm_route.confidence < LLM_ROUTE_MIN_CONFIDENCE:
+        return rule_route
+    return llm_route
+
+
+async def llm_route_task_context(
+    text: str,
+    *,
+    user_session_id: str = "",
+    runtime_session_id: str = "",
+    tasks: list[GlobalTask],
+    rule_route: TaskRouteDecision,
+    model_call: Any = None,
+) -> TaskRouteDecision | None:
+    if model_call is None:
+        from src.kms.model import ModelCall
+
+        model_call = ModelCall()
+
+    ask_json = getattr(model_call, "ask_json", None)
+    if ask_json is None:
+        return None
+
+    candidates = _route_candidates(text, tasks, rule_route)
+    result = await ask_json(
+        system=TASK_ROUTE_SYSTEM,
+        user=(
+            f"User message: {text}\n"
+            f"Rule route: {_route_summary(rule_route)}\n"
+            f"Candidate tasks: {candidates}\n"
+            "Route the message."
+        ),
+        max_tokens=260,
+    )
+    if not isinstance(result, dict):
+        return None
+
+    routing_decision = str(result.get("routing_decision") or "").strip()
+    if routing_decision not in ALLOWED_ROUTING_DECISIONS:
+        return None
+
+    confidence = _clamp_confidence(result.get("confidence"))
+    target_task_id = str(result.get("target_task_id") or "").strip()
+    candidate_ids = {str(item.get("task_id") or "") for item in candidates}
+    if routing_decision == "select_existing" and target_task_id not in candidate_ids:
+        return None
+
+    reason = str(result.get("reason") or "llm_task_router")
+    time_reason = {
+        "source": "llm_router",
+        "rule_decision": rule_route.routing_decision,
+        "rule_confidence": rule_route.confidence,
+        "reason": reason,
+    }
+    if routing_decision == "select_existing":
+        return TaskRouteDecision(
+            user_session_id=user_session_id,
+            runtime_session_id=runtime_session_id,
+            user_message=(text or "").strip(),
+            routing_decision="select_existing",
+            target_task_id=target_task_id,
+            confidence=confidence,
+            matched_hints=["llm_router"],
+            time_reason=time_reason,
+            candidate_tasks=candidates,
+        )
+    if routing_decision == "ask_clarification":
+        return TaskRouteDecision(
+            user_session_id=user_session_id,
+            runtime_session_id=runtime_session_id,
+            user_message=(text or "").strip(),
+            routing_decision="ask_clarification",
+            confidence=confidence,
+            time_reason=time_reason,
+            candidate_tasks=candidates,
+            needs_user_clarification=True,
+            clarification_question=str(
+                result.get("clarification_question") or "你指的是哪一个任务？"
+            ),
+        )
+    return TaskRouteDecision(
+        user_session_id=user_session_id,
+        runtime_session_id=runtime_session_id,
+        user_message=(text or "").strip(),
+        routing_decision="create_new",
+        confidence=confidence,
+        time_reason=time_reason,
+        candidate_tasks=candidates,
+    )
+
+
 def _select(
     content: str,
     *,
@@ -393,3 +540,44 @@ def _candidate(score: float, task: GlobalTask) -> dict:
         if task.last_activity_at
         else None,
     }
+
+
+def _route_candidates(
+    text: str,
+    tasks: list[GlobalTask],
+    rule_route: TaskRouteDecision,
+) -> list[dict[str, Any]]:
+    if rule_route.candidate_tasks:
+        return rule_route.candidate_tasks[:5]
+    ranked = []
+    for task in tasks:
+        score, _matched = _score_task(text, task)
+        ranked.append((score, task))
+    ranked.sort(
+        key=lambda item: (
+            item[0],
+            item[1].last_user_touch_at or item[1].updated_at,
+            item[1].last_activity_at or item[1].updated_at,
+        ),
+        reverse=True,
+    )
+    return [_candidate(score, task) for score, task in ranked[:5]]
+
+
+def _route_summary(route: TaskRouteDecision) -> dict[str, Any]:
+    return {
+        "routing_decision": route.routing_decision,
+        "target_task_id": route.target_task_id,
+        "confidence": route.confidence,
+        "needs_user_clarification": route.needs_user_clarification,
+        "matched_hints": route.matched_hints,
+        "time_reason": route.time_reason,
+    }
+
+
+def _clamp_confidence(value: Any) -> float:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, confidence))
