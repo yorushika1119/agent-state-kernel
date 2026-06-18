@@ -861,3 +861,78 @@ python scripts\live_interrupt_demo.py --real-model
 - 给 DeepSeek 账号补余额后，可以直接重跑：
   `python scripts\live_interrupt_demo.py --real-model`
 - 或配置另一个可用 provider key，再用同一脚本重跑真实模型 smoke。
+
+## 2026-06-18 第十阶段完成情况
+
+本阶段完成了 `KernelDirectResponder` 的 task-local 查询支持。
+
+核心变化：
+- direct responder 支持接收 `target_task_id`。
+- `KmsManager` 会把 Task Context Router 选中的 task 传给 direct responder。
+- 查询 progress / evidence / failures 时，可以按目标 task 过滤，不再默认读取当前 active task 的全 session 状态。
+- 修正了状态查询路由优先级：如果用户说“支付 webhook 那个当前进度”，router 会优先选择命中的 task，而不是盲目选择 active task。
+
+新增测试覆盖：
+- 查询旧任务 A 的证据，不混入当前任务 B 的证据。
+- 查询旧任务 A 的失败工具，不混入当前任务 B 的失败工具。
+- 查询旧任务 A 的进度时，不打断当前任务 B 的 active run。
+
+验证结果：
+
+```text
+python -m pytest
+61 passed
+```
+
+已同步提交：
+
+```text
+6371750 Scope direct kernel replies to routed tasks
+```
+
+当前边界：
+- `evidence_items` 和 `execution_actions` 旧表仍没有原生 `task_id` 列。
+- 当前 task-local 过滤主要依赖 `task.last_run_id`、task dispatch、task steps、claim supporting evidence 和事件日志。
+- 后续如果要更强隔离，可以给旧主表补 `task_id`，但这会牵涉迁移和 reducer 更新，不建议和当前阶段混在一起做。
+
+## 2026-06-18 第十一阶段：真实 DeepSeek smoke 复测成功
+
+更换新的 DeepSeek key 后，重新运行真实模型 smoke。
+
+执行命令：
+
+```text
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python scripts\live_interrupt_demo.py --real-model
+```
+
+本次 smoke 使用：
+- Hermes 真实 Gateway 路径。
+- KMS/kernel 真实 dispatch API。
+- Hermes 当前真实 provider 配置：`deepseek` / `deepseek-v4-pro`。
+- 真实 DeepSeek API 调用成功返回答案。
+
+关键输出：
+
+| step | actor | visible content / action | run_id | dispatch_id | status |
+| --- | --- | --- | --- | --- | --- |
+| 1 | user | 要求先执行 `Start-Sleep -Seconds 15`，再总结 agent-state-kernel 职责 |  |  | sent |
+| 2 | KMS | start_new_task | run_9ed870c8e7a6 | td_60de924e0e5c | failed |
+| 3 | user | 中断刚才任务，直接回答 KMS 和 Kernel 的职责差异 |  |  | sent while first run active |
+| 4 | KMS | interrupt_and_replan | run_868748056c37 | td_b78bc51c1e17 | completed |
+| 5 | assistant | Interrupting current task... | run_9ed870c8e7a6 |  | interrupt notice |
+| 6 | assistant | 回答 KMS 是 Kernel 内的判断/评估引擎，Kernel 是完整认知操作系统 | run_868748056c37 |  | final reply |
+| 7 | kernel | active_run cleared |  |  | empty |
+
+结论：
+- 第一次真实模型请求创建 `run_9ed870c8e7a6 / td_60de924e0e5c`。
+- 第二次用户请求在第一条 run 仍活跃时进入 KMS，触发 `interrupt_and_replan`。
+- Hermes Gateway 中断旧 API call，旧 dispatch 被标记为 `failed`。
+- 新 dispatch `td_b78bc51c1e17` 被 `hermes-gateway` claim，并最终 `completed`。
+- DeepSeek 真实回答成功返回。
+- Kernel 最后清空 `active_run`。
+
+当前边界：
+- 这次验证的是真实模型回答和 Gateway/KMS/kernel 打断链路。
+- 真实工具调用中断边界还可以继续压测，例如长 shell、文件写入、浏览器工具调用等。
+- Hermes 部署目录当前本地 git 状态为 `main...origin/main [ahead 1, behind 505]`，本次 smoke 没有修改该目录文件。
