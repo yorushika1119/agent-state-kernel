@@ -124,6 +124,7 @@ class SqliteStore:
             CREATE TABLE IF NOT EXISTS evidence_items (
                 evidence_id TEXT NOT NULL,
                 kernel_session_id TEXT NOT NULL,
+                task_id TEXT DEFAULT '',
                 evidence_type TEXT DEFAULT 'web_page',
                 source TEXT,
                 title TEXT,
@@ -160,6 +161,7 @@ class SqliteStore:
             CREATE TABLE IF NOT EXISTS execution_actions (
                 action_id TEXT NOT NULL,
                 kernel_session_id TEXT NOT NULL,
+                task_id TEXT DEFAULT '',
                 step_id TEXT,
                 tool TEXT,
                 status TEXT DEFAULT 'running',
@@ -472,6 +474,8 @@ class SqliteStore:
         await self._ensure_column("session_links", "last_interrupt_reason", "TEXT DEFAULT ''")
         await self._ensure_column("session_links", "last_interrupt_at", "TEXT")
 
+        await self._ensure_column("evidence_items", "task_id", "TEXT DEFAULT ''")
+        await self._ensure_column("execution_actions", "task_id", "TEXT DEFAULT ''")
         await self._ensure_column("task_brief_states", "task_id", "TEXT DEFAULT ''")
         await self._ensure_column("task_brief_states", "task_brief_version", "INTEGER DEFAULT 0")
         await self._ensure_column("task_flows", "task_id", "TEXT DEFAULT ''")
@@ -1107,6 +1111,7 @@ class SqliteStore:
         return [
             {
                 "action_id": action.action_id,
+                "task_id": action.task_id,
                 "step_id": action.step_id,
                 "tool": action.tool,
                 "status": action.status,
@@ -1530,6 +1535,7 @@ class SqliteStore:
         return [
             EvidenceItem(
                 evidence_id=r["evidence_id"],
+                task_id=r["task_id"] or "",
                 evidence_type=EvidenceType(r["evidence_type"]),
                 source=r["source"] or "",
                 title=r["title"] or "",
@@ -1545,15 +1551,19 @@ class SqliteStore:
 
     async def save_evidence(self, session_id: str, evidence: EvidenceItem):
         """保存单条证据——使用 REPLACE（upsert）。"""
+        if not evidence.task_id:
+            session = await self.get_session(session_id)
+            evidence.task_id = session.active_task_id if session else ""
         await self.conn.execute(
             """INSERT OR REPLACE INTO evidence_items
-               (evidence_id, kernel_session_id, evidence_type, source, title,
+               (evidence_id, kernel_session_id, task_id, evidence_type, source, title,
                 observed_at, source_date, reliability, extracted_facts,
                 raw_ref, accepted_by, accepted_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 evidence.evidence_id,
                 session_id,
+                evidence.task_id,
                 evidence.evidence_type.value,
                 evidence.source,
                 evidence.title,
@@ -1683,6 +1693,7 @@ class SqliteStore:
         return [
             ExecutionAction(
                 action_id=r["action_id"],
+                task_id=r["task_id"] or "",
                 step_id=r["step_id"] or "",
                 tool=r["tool"] or "",
                 status=r["status"],
@@ -1698,15 +1709,19 @@ class SqliteStore:
 
     async def save_execution(self, session_id: str, action: ExecutionAction):
         """保存单条执行动作——使用 REPLACE（upsert）。"""
+        if not action.task_id:
+            session = await self.get_session(session_id)
+            action.task_id = session.active_task_id if session else ""
         await self.conn.execute(
             """INSERT OR REPLACE INTO execution_actions
-               (action_id, kernel_session_id, step_id, tool, status,
+               (action_id, kernel_session_id, task_id, step_id, tool, status,
                 input_summary, output_ref, runtime_refs, retry_count,
                 started_at, ended_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 action.action_id,
                 session_id,
+                action.task_id,
                 action.step_id,
                 action.tool,
                 action.status,

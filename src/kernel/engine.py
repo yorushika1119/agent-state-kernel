@@ -272,6 +272,7 @@ class KernelEngine:
             "evidence": [
                 {
                     "evidence_id": item.evidence_id,
+                    "task_id": item.task_id,
                     "evidence_type": item.evidence_type.value,
                     "source": item.source,
                     "title": item.title,
@@ -301,6 +302,7 @@ class KernelEngine:
             "executions": [
                 {
                     "action_id": action.action_id,
+                    "task_id": action.task_id,
                     "step_id": action.step_id,
                     "tool": action.tool,
                     "status": action.status,

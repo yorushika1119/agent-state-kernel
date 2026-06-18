@@ -1018,3 +1018,50 @@ python -m pytest
 - 这个 smoke 使用可控 agent 触发真实子进程工具，不依赖真实大模型选择工具。
 - 浏览器工具、文件写入工具等更复杂工具还没有逐一压测。
 - Gateway proxy mode 的 dispatch 生命周期仍未接入本轮验证。
+
+## 2026-06-18 第十三阶段：evidence / execution 原生 task_id 归属
+
+本阶段把多任务隔离从调度层进一步落到状态层。
+
+核心变化：
+- `EvidenceItem` 新增 `task_id` 字段。
+- `ExecutionAction` 新增 `task_id` 字段。
+- SQLite 表新增原生归属列：
+  - `evidence_items.task_id`
+  - `execution_actions.task_id`
+- 新库建表会直接包含该列。
+- 旧库启动时通过 `_ensure_column()` 自动补列，不做大迁移。
+- `save_evidence()` 会在证据没有 task_id 时绑定当前 `session.active_task_id`。
+- `save_execution()` 会在执行动作没有 task_id 时绑定当前 `session.active_task_id`。
+- `thinker_view` 中的 evidence / executions 现在会输出 `task_id`。
+- `task_flow.execution_summary` 现在也包含 execution 的 `task_id`。
+
+direct responder 同步调整：
+- 查询某个 routed task 的 evidence / failures 时，优先使用原生 `task_id` 过滤。
+- 历史旧数据如果没有 `task_id`，仍保留原有 fallback：
+  - claim supporting evidence；
+  - task dispatch run_id；
+  - event log run_id；
+  - task steps。
+
+新增测试覆盖：
+- 同一 kernel session 下，任务 A 的 evidence 写入 `task_id=A`。
+- 同一 kernel session 下，任务 B 的 evidence 写入 `task_id=B`。
+- 任务 A 的 failed execution 写入 `task_id=A`。
+- 任务 B 的 failed execution 写入 `task_id=B`。
+- thinker view 暴露 evidence / execution 的 `task_id`。
+- direct responder 查询任务 A 时，不混入任务 B 的 evidence / failures。
+
+验证结果：
+
+```text
+python -m py_compile src\schema\state.py src\stores\sqlite_store.py src\kernel\engine.py src\kms\kernel_direct_responder.py
+python -m pytest
+62 passed
+```
+
+当前边界：
+- 这一步没有回填历史旧数据的 `task_id`，旧数据仍依赖 fallback。
+- `belief_items` 仍是旧主表，`claim_items` 已有 task_id 兼容层。
+- `progress_states` 仍是 session 级摘要；task-local progress 当前主要来自 task snapshot。
+- 后续如要继续收敛，可以考虑给 `progress_states` 或新版 `task_flow` 做更强 task-local 查询，而不是直接大改旧 progress 主表。

@@ -252,6 +252,7 @@ class Reliability(StrEnum):
 
 class EvidenceItem(BaseModel):
     evidence_id: str
+    task_id: str = ""
     evidence_type: EvidenceType
     source: str  # URL, file path, user input
     title: str = ""
@@ -308,6 +309,7 @@ class ClaimItem(BaseModel):
 
 class ExecutionAction(BaseModel):
     action_id: str
+    task_id: str = ""
     step_id: str = ""
     tool: str
     status: str = "success"  # success, failed, timeout

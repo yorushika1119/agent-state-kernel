@@ -336,6 +336,33 @@ async def test_direct_kernel_response_uses_router_target_task_scope():
         )
         assert ok, reason
 
+        evidence_by_id = {
+            item.evidence_id: item
+            for item in await store.get_evidence(first.kernel_session_id)
+        }
+        executions_by_id = {
+            item.action_id: item
+            for item in await store.get_executions(first.kernel_session_id)
+        }
+        assert evidence_by_id["ev_task_a"].task_id == first.task_id
+        assert evidence_by_id["ev_task_b"].task_id == second.task_id
+        assert executions_by_id["act_a_fail"].task_id == first.task_id
+        assert executions_by_id["act_b_fail"].task_id == second.task_id
+
+        thinker_view = await engine.get_thinker_view(first.kernel_session_id)
+        thinker_evidence_by_id = {
+            item["evidence_id"]: item
+            for item in thinker_view["evidence"]
+        }
+        thinker_execution_by_id = {
+            item["action_id"]: item
+            for item in thinker_view["executions"]
+        }
+        assert thinker_evidence_by_id["ev_task_a"]["task_id"] == first.task_id
+        assert thinker_evidence_by_id["ev_task_b"]["task_id"] == second.task_id
+        assert thinker_execution_by_id["act_a_fail"]["task_id"] == first.task_id
+        assert thinker_execution_by_id["act_b_fail"]["task_id"] == second.task_id
+
         evidence_reply = await manager.dispatch_user_message(
             text="支付 webhook 那个有什么证据？",
             runtime_session_id="rt-router-direct-scope",

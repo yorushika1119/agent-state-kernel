@@ -185,6 +185,8 @@ class KernelDirectResponder:
         evidence: list[EvidenceItem],
         task: TaskSnapshot,
     ) -> list[EvidenceItem]:
+        native = [item for item in evidence if item.task_id == task.task_id]
+        legacy = [item for item in evidence if not item.task_id]
         evidence_ids: set[str] = set()
         for claim in await self.store.get_claim_items(session_id):
             if claim.task_id == task.task_id:
@@ -204,7 +206,7 @@ class KernelDirectResponder:
             for payload in payloads
             if payload.get("evidence_id")
         )
-        return [item for item in evidence if item.evidence_id in evidence_ids]
+        return native + [item for item in legacy if item.evidence_id in evidence_ids]
 
     async def _filter_executions_for_task(
         self,
@@ -212,6 +214,8 @@ class KernelDirectResponder:
         executions: list[ExecutionAction],
         task: TaskSnapshot,
     ) -> list[ExecutionAction]:
+        native = [item for item in executions if item.task_id == task.task_id]
+        legacy = [item for item in executions if not item.task_id]
         payloads = await self._task_event_payloads(
             session_id,
             task,
@@ -229,11 +233,7 @@ class KernelDirectResponder:
             if payload.get("action_id")
         }
         if action_ids:
-            return [item for item in executions if item.action_id in action_ids]
+            return native + [item for item in legacy if item.action_id in action_ids]
 
         step_ids = self._task_step_ids(task)
-        return [
-            item
-            for item in executions
-            if item.step_id in step_ids
-        ]
+        return native + [item for item in legacy if item.step_id in step_ids]
