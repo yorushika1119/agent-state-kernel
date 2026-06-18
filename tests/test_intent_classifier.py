@@ -52,6 +52,16 @@ def test_rule_fast_path_classifies_claim_and_todo_queries():
     assert todos.kernel_answer_kind == "todos"
 
 
+def test_rule_fast_path_classifies_explicit_new_task_and_resume_markers():
+    new_task = classify_dispatch_intent("我们换个任务", session=active_session())
+    resume = classify_dispatch_intent("继续刚才那个任务", session=active_session())
+
+    assert new_task.intent == "new_task"
+    assert new_task.reason == "explicit_new_task_marker"
+    assert resume.intent == "resume_previous_task"
+    assert resume.reason == "resume_previous_task_marker"
+
+
 @pytest.mark.asyncio
 async def test_rule_fast_path_does_not_call_llm():
     model = FakeModel(
@@ -92,6 +102,56 @@ async def test_work_request_marker_is_new_task_without_llm():
     assert intent.intent == "new_task"
     assert intent.reason == "work_request_marker"
     assert intent.source == "rule"
+    assert model.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_chinese_work_request_marker_is_new_task_without_llm():
+    model = FakeModel(
+        {
+            "intent": "same_task_steer",
+            "confidence": 0.99,
+            "reason": "should not be used",
+        }
+    )
+
+    intent = await classify_dispatch_intent_with_llm(
+        "请研究一下 A 公司",
+        session=active_session(),
+        model_call=model,
+    )
+
+    assert intent.intent == "new_task"
+    assert intent.reason == "work_request_marker"
+    assert intent.source == "rule"
+    assert model.calls == 0
+
+
+def test_status_like_sentence_with_work_verb_does_not_become_new_task():
+    intent = classify_dispatch_intent("这个任务目前研究到哪了？", session=active_session())
+
+    assert intent.intent == "uncertain"
+    assert intent.reason == "no_rule_matched"
+
+
+@pytest.mark.asyncio
+async def test_kernel_query_without_context_does_not_call_llm():
+    model = FakeModel(
+        {
+            "intent": "kernel_answerable_query",
+            "confidence": 0.99,
+            "kernel_answer_kind": "progress",
+            "reason": "should not be used",
+        }
+    )
+
+    intent = await classify_dispatch_intent_with_llm(
+        "现在完成到哪一步了？",
+        model_call=model,
+    )
+
+    assert intent.intent == "uncertain"
+    assert intent.reason == "no_rule_matched"
     assert model.calls == 0
 
 
