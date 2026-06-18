@@ -272,6 +272,62 @@ async def test_old_run_tool_failed_is_rejected_after_interrupt():
 
 
 @pytest.mark.asyncio
+async def test_old_run_tool_completed_and_raw_result_are_rejected_after_interrupt():
+    store, engine, manager = await build_engine()
+    try:
+        first = await manager.dispatch_user_message(
+            text="task A",
+            runtime_session_id="rt-tool-late-result",
+            runtime_type="gateway",
+            agent_id="agent-engine",
+        )
+        second = await manager.dispatch_user_message(
+            text="task B",
+            runtime_session_id="rt-tool-late-result",
+            runtime_type="gateway",
+            agent_id="agent-engine",
+        )
+
+        for request_type, payload in (
+            (
+                "ToolCompleted",
+                {
+                    "action_id": "late_complete",
+                    "tool": "terminal",
+                    "output_summary": "old tool completed after interrupt",
+                },
+            ),
+            (
+                "RawResultAvailable",
+                {
+                    "result_id": first.run_id,
+                    "ref": first.run_id,
+                    "status": "completed",
+                    "summary": "old final result arrived late",
+                },
+            ),
+        ):
+            ok, reason, event = await engine.submit_event(
+                EventSubmission(
+                    session_id=first.kernel_session_id,
+                    component="thinker",
+                    request_type=request_type,
+                    run_id=first.run_id,
+                    payload=payload,
+                )
+            )
+            assert not ok
+            assert event is None
+            assert "Stale thinker run" in (reason or "")
+
+        thinker = await engine.get_thinker_view(first.kernel_session_id)
+        assert thinker["cancellation"]["active_run_id"] == second.run_id
+        assert thinker["executions"] == []
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_multiple_interrupts_leave_only_latest_run_active():
     store, engine, manager = await build_engine()
     try:

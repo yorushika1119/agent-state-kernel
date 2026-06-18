@@ -936,3 +936,85 @@ python scripts\live_interrupt_demo.py --real-model
 - 这次验证的是真实模型回答和 Gateway/KMS/kernel 打断链路。
 - 真实工具调用中断边界还可以继续压测，例如长 shell、文件写入、浏览器工具调用等。
 - Hermes 部署目录当前本地 git 状态为 `main...origin/main [ahead 1, behind 505]`，本次 smoke 没有修改该目录文件。
+
+## 2026-06-18 第十二阶段：真实工具调用中断 smoke
+
+本阶段新增并运行了真实工具进程中断 smoke。
+
+新增脚本：
+
+```text
+scripts/live_tool_interrupt_smoke.py
+```
+
+脚本说明：
+- 复用 Hermes Gateway 的真实 interrupt 路径。
+- 复用 KMS/kernel dispatch API。
+- 使用可控 agent，但不是纯 sleep mock：agent 会启动一个真实子进程工具。
+- 工具进程执行当前 Python 解释器的 `time.sleep(15)`。
+- 用户第二条消息到达后，Gateway interrupt 会终止该子进程。
+- agent 会尝试提交迟到 tool result，用来验证旧输出不会进入用户可见结果。
+
+执行命令：
+
+```text
+python scripts\live_tool_interrupt_smoke.py
+```
+
+关键输出：
+
+| step | actor | visible content / action | run_id | dispatch_id | status |
+| --- | --- | --- | --- | --- | --- |
+| 1 | user | first long task |  |  | sent |
+| 2 | KMS | start_new_task | run_4b4fe527c1c3 | td_eb8e9fa12362 | failed |
+| 3 | user | interrupt and answer only this |  |  | sent while first run active |
+| 4 | KMS | interrupt_and_replan | run_e64e53cfb164 | td_01a3d96f94de | completed |
+| 5 | assistant | Interrupting current task... | run_4b4fe527c1c3 |  | interrupt notice |
+| 6 | assistant | FINAL:interrupt and answer only this | run_e64e53cfb164 |  | final reply |
+| 7 | kernel | active_run cleared |  |  | empty |
+
+工具进程结果：
+
+```text
+tool_started=True
+process_started=True
+interrupt_received=True
+process_was_terminated=True
+late_tool_result_attempted=True
+process_return_code=1
+```
+
+结论：
+- 真实工具子进程确实启动。
+- 用户第二条消息触发 Gateway interrupt。
+- 旧工具子进程被终止。
+- 旧任务没有输出 `FINAL:first long task`。
+- 旧 dispatch 被标记为 `failed`。
+- 新 dispatch 正常 `completed`。
+- Kernel 最后清空 `active_run`。
+
+新增单元测试：
+
+```text
+tests/test_smoke_interrupt.py::test_old_run_tool_completed_and_raw_result_are_rejected_after_interrupt
+```
+
+该测试验证：
+- 旧 run 被打断后，迟到 `ToolCompleted` 会被拒绝。
+- 旧 run 被打断后，迟到 `RawResultAvailable` 会被拒绝。
+- 当前 active run 仍保持为新 run。
+- execution 视图不会被旧 run 的迟到结果污染。
+
+验证结果：
+
+```text
+python -m py_compile scripts\live_tool_interrupt_smoke.py
+python scripts\live_tool_interrupt_smoke.py
+python -m pytest
+62 passed
+```
+
+当前边界：
+- 这个 smoke 使用可控 agent 触发真实子进程工具，不依赖真实大模型选择工具。
+- 浏览器工具、文件写入工具等更复杂工具还没有逐一压测。
+- Gateway proxy mode 的 dispatch 生命周期仍未接入本轮验证。
