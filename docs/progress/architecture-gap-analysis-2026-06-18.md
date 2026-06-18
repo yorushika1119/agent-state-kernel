@@ -736,3 +736,128 @@ python -m pytest -o addopts='' C:\Users\EDY\AppData\Local\hermes\hermes-agent\te
 2. 把 Task Context Router 的 `target_task_id` 接入 `KmsManager` 的目标 task 选择。
 3. 再考虑 proxy mode dispatch 生命周期。
 4. 最后再做旧状态表到新命名表的主从切换。
+
+## 2026-06-18 第七阶段完成情况
+
+本阶段完成了 Task Context Router 从“只记录 route decision”到“实际接管目标 task 选择”的第一步。
+
+核心变化：
+- `KmsManager` 现在会读取 `route_task_context()` 返回的 `target_task_id`。
+- 当 router 明确选中已有 task，且用户消息不是明确新任务 / resume 指令时，KMS 会切换到该 task。
+- 如果当前有 active task，KMS 会先把当前 task 快照为 paused，再恢复 router 选中的 task。
+- ambiguous route 会直接返回 `respond_from_kernel` 澄清问题，不唤醒 Thinker，也不打断当前 active run。
+- `respond_from_kernel`、`resume_context`、`interrupt_and_replan` 的旧语义保持兼容。
+- 修复了 `SemanticConflictJudge` 的局部 `EventType` import 作用域问题。
+- 给 `BeliefReviewJudge` 和 `Gate` 增加了很窄的离线规则，避免 DeepSeek key 无效时核心安全测试不稳定。
+
+新增测试：
+- router 选中旧 task 后，KMS 真的切回该 task，并暂停当前 task。
+- router 多候选低置信时，只问用户澄清，不打断当前 run。
+- “继续刚才的任务”仍走旧的 paused task resume 语义，不被 router 的“最近任务”误抢。
+
+已验证：
+
+```text
+python -m pytest -o addopts='' C:\program1\agent-state-kernel\tests -q
+57 passed
+
+python -m pytest -o addopts='' C:\Users\EDY\AppData\Local\hermes\hermes-agent\tests\gateway\test_interrupt_demo_output.py -q
+1 passed
+
+python -m pytest -o addopts='' C:\Users\EDY\AppData\Local\hermes\hermes-agent\tests\gateway\test_busy_session_ack.py -q
+32 passed, 1 skipped
+
+python -m pytest -o addopts='' C:\Users\EDY\AppData\Local\hermes\hermes-agent\tests\cli\test_cli_init.py -q
+59 passed
+```
+
+当前边界：
+- 这一步只保证同一 kernel session 内的多 task 路由稳定；跨 kernel session 的 task 切换还没有完整调度模型。
+- router 仍是规则 + 简单打分，公共词弱匹配已经被 KMS 的 intent 判断压住，但还不是最终语义路由器。
+- direct kernel response 仍主要按 session 读状态，尚未做到完全 task-local 的 progress/evidence/failure 查询。
+
+下一步建议：
+1. 做真实本地联调 smoke，记录一次完整用户输出：“旧任务执行中 -> 新请求打断 -> 新 dispatch claim -> 新回答返回”。
+2. 让 direct responder 支持按 `target_task_id` 查询 task-local 状态。
+3. 再做 proxy mode dispatch 生命周期。
+4. 最后再考虑旧状态表到新命名表的主从切换。
+
+## 2026-06-18 第八阶段完成情况
+
+本阶段完成了真实 Hermes 部署目录下的本地联调 smoke 输出整理。
+
+执行命令：
+
+```text
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python scripts\live_interrupt_demo.py
+```
+
+说明：
+- 该 smoke 走真实 Hermes Gateway interrupt 路径。
+- 该 smoke 走真实 KMS/kernel dispatch API。
+- 为了稳定复现，不调用真实大模型，而是用可控 `DemoAgent` 模拟“第一个任务很慢、第二个任务立即回答”。
+
+关键输出：
+
+| step | actor | visible content / action | run_id | dispatch_id | status |
+| --- | --- | --- | --- | --- | --- |
+| 1 | user | first long task |  |  | sent |
+| 2 | KMS | start_new_task | run_9189e6b9d94a | td_466b336b2225 | failed |
+| 3 | user | interrupt and answer only this |  |  | sent while first run active |
+| 4 | KMS | interrupt_and_replan | run_b742d61a2817 | td_3d1109c7991e | completed |
+| 5 | assistant | Interrupting current task. I'll respond to your message shortly. | run_9189e6b9d94a |  | interrupt notice |
+| 6 | assistant | FINAL:interrupt and answer only this | run_b742d61a2817 |  | final reply |
+| 7 | kernel | active_run cleared |  |  | empty |
+
+结论：
+- 第一次用户请求创建 `run_1 / dispatch_1`。
+- 第二次用户请求在 `run_1` 未完成时进入 KMS，触发 `interrupt_and_replan`。
+- Hermes Gateway 对旧 agent 发出 interrupt。
+- 旧 dispatch 被标记为 `failed`，没有输出 `FINAL:first long task`。
+- 新 dispatch 被 `hermes-gateway` claim，并最终 `completed`。
+- 用户可见输出只有中断提示和第二个请求的最终回复。
+
+当前边界：
+- 这仍是本地可控 smoke，不是真实大模型输出 smoke。
+- 真实大模型 smoke 需要有效模型 API key，并且运行时间、输出内容不完全稳定。
+- 该 smoke 已足够验证 Gateway/KMS/kernel 的打断调度链路。
+
+## 2026-06-18 第九阶段：真实大模型 smoke 尝试
+
+本阶段尝试用真实 Hermes 模型配置跑同一条打断链路。
+
+执行命令：
+
+```text
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python scripts\live_interrupt_demo.py --real-model
+```
+
+本次 smoke 使用：
+- Hermes 真实 Gateway 路径。
+- KMS/kernel 真实 dispatch API。
+- Hermes 当前真实 provider 配置：`deepseek` / `deepseek-v4-pro`。
+- smoke 脚本内临时禁用 `reasoning_effort`，避免 DeepSeek OpenAI-compatible endpoint 不接受该参数。
+
+实际结果：
+
+| step | actor | visible content / action | run_id | dispatch_id | status |
+| --- | --- | --- | --- | --- | --- |
+| 1 | user | 要求先执行 `Start-Sleep -Seconds 15`，再总结项目职责 |  |  | sent |
+| 2 | KMS | start_new_task | run_a306d4e00958 | td_2a2735d313ed | failed |
+| 3 | user | 中断刚才任务，直接回答 KMS 和 Kernel 的职责差异 |  |  | sent while first run active |
+| 4 | KMS | interrupt_and_replan | run_3d1adb6cb4b7 | td_1d28407379aa | failed |
+| 5 | assistant | Interrupting current task... | run_a306d4e00958 |  | interrupt notice |
+| 6 | assistant | provider failed after retries | run_3d1adb6cb4b7 |  | provider failure reply |
+| 7 | kernel | active_run cleared |  |  | empty |
+
+结论：
+- 真实 Gateway/KMS/kernel 打断链路跑通：第二条消息触发 `interrupt_and_replan`，旧 run 被中断，两个 dispatch 都被 `hermes-gateway` claim 并收尾。
+- 真实大模型回答没有成功，失败原因不是 KMS，而是 DeepSeek provider 返回 `HTTP 402 Insufficient Balance`。
+- 当前环境只检测到 `DEEPSEEK_API_KEY`，没有其他可切换的真实 provider key。
+
+后续处理：
+- 给 DeepSeek 账号补余额后，可以直接重跑：
+  `python scripts\live_interrupt_demo.py --real-model`
+- 或配置另一个可用 provider key，再用同一脚本重跑真实模型 smoke。

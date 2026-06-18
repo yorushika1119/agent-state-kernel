@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.kernel.engine import KernelEngine
 from src.kms.manager import KmsManager
 from src.kms.task_context_router import route_task_context
+from src.schema.events import EventSubmission
 from src.stores.sqlite_store import SqliteStore
 
 
@@ -91,6 +92,116 @@ async def test_global_task_directory_tracks_pause_resume_and_completion():
         assert await engine.complete_run(resume.kernel_session_id, resume.run_id, session_status="completed")
         completed_global = await store.get_global_task(resume.task_id)
         assert completed_global.status.value == "completed"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_uses_router_target_task_to_switch_existing_task():
+    store, engine, manager = await build_runtime()
+    try:
+        first = await manager.dispatch_user_message(
+            text="请研究任务 A：实时打断机制",
+            runtime_session_id="rt-router-target",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        second = await manager.dispatch_user_message(
+            text="这是一个新任务，请研究任务 B：任务路由机制",
+            runtime_session_id="rt-router-target",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+
+        assert second.task_id != first.task_id
+        assert (await store.get_global_task(first.task_id)).status.value == "paused"
+        assert (await store.get_global_task(second.task_id)).status.value == "active"
+
+        routed = await manager.dispatch_user_message(
+            text="任务 A：实时打断机制 那个继续做",
+            runtime_session_id="rt-router-target",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+
+        assert routed.route_decision == "select_existing"
+        assert routed.reason == "route_selected_existing_task"
+        assert routed.task_action == "continue_routed_task"
+        assert routed.task_id == first.task_id
+        assert routed.run_id not in {first.run_id, second.run_id}
+
+        thinker = await engine.get_thinker_view(first.kernel_session_id)
+        assert thinker["cancellation"]["active_task_id"] == first.task_id
+        assert thinker["cancellation"]["active_run_id"] == routed.run_id
+        assert thinker["cancellation"]["last_interrupted_run_id"] == second.run_id
+
+        assert (await store.get_global_task(first.task_id)).status.value == "active"
+        assert (await store.get_global_task(second.task_id)).status.value == "paused"
+
+        ok, reason, event = await engine.submit_event(
+            EventSubmission(
+                session_id=first.kernel_session_id,
+                component="thinker",
+                request_type="ToolStarted",
+                run_id=second.run_id,
+                payload={
+                    "action_id": "act_stale_router",
+                    "tool": "local.read",
+                    "input_summary": "stale routed task write",
+                },
+            )
+        )
+        assert not ok
+        assert event is None
+        assert "Stale thinker run" in (reason or "")
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_router_target_asks_clarification_without_interrupting():
+    store, engine, manager = await build_runtime()
+    try:
+        first = await manager.dispatch_user_message(
+            text="请研究任务 A：实时打断机制",
+            runtime_session_id="rt-router-clarify",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        second = await manager.dispatch_user_message(
+            text="这是一个新任务，请研究任务 B：任务路由机制",
+            runtime_session_id="rt-router-clarify",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        before_events = await store.get_events(second.kernel_session_id, limit=100)
+        before_interrupts = [
+            item for item in before_events if item["event_type"] == "RunInterrupted"
+        ]
+
+        reply = await manager.dispatch_user_message(
+            text="那个现在怎么样？",
+            runtime_session_id="rt-router-clarify",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+
+        assert reply.action == "respond_from_kernel"
+        assert reply.task_action == "ask_clarification"
+        assert reply.requires_thinker is False
+        assert reply.reason == "task_route_needs_clarification"
+        assert reply.run_id == second.run_id
+        assert "你指的是哪一个任务" in reply.kernel_response
+
+        thinker = await engine.get_thinker_view(second.kernel_session_id)
+        assert thinker["cancellation"]["active_run_id"] == second.run_id
+        assert thinker["cancellation"]["active_task_id"] == second.task_id
+
+        after_events = await store.get_events(second.kernel_session_id, limit=100)
+        after_interrupts = [
+            item for item in after_events if item["event_type"] == "RunInterrupted"
+        ]
+        assert len(after_interrupts) == len(before_interrupts)
     finally:
         await store.close()
 

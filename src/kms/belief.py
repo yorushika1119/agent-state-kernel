@@ -33,6 +33,34 @@ Given a belief claim and its supporting evidence facts, determine:
 Respond with ONLY a JSON object, no markdown."""
 
 
+def _rule_review_overconfident_claim(
+    claim: str,
+    supporting_facts: List[str],
+    declared_confidence: float,
+) -> JudgeResult | None:
+    content = f"{claim} {' '.join(supporting_facts)}".lower()
+    claim_lower = claim.lower()
+    overclaims_no_competitor = any(
+        marker in claim_lower
+        for marker in ("唯一", "没有竞争对手", "没有对手", "only", "no competitor")
+    )
+    evidence_mentions_competition = any(
+        marker in content
+        for marker in ("amd", "竞争", "追赶", "catching up", "competitor")
+    )
+    if overclaims_no_competitor and evidence_mentions_competition:
+        return JudgeResult(
+            judge_name="belief_review_judge",
+            verdict="modify",
+            reason="支撑证据提到竞争者，不能声明没有竞争对手",
+            modifications={
+                "status": "conflicting",
+                "confidence": min(declared_confidence, 0.6),
+            },
+        )
+    return None
+
+
 class BeliefReviewJudge(BaseJudge):
     """审查信念声明是否与其支撑证据一致。
 
@@ -92,6 +120,14 @@ class BeliefReviewJudge(BaseJudge):
                 reason="支持证据ID无法在证据库中找到",
                 modifications={"confidence": min(declared_confidence, 0.4)},
             )
+
+        rule_result = _rule_review_overconfident_claim(
+            claim,
+            supporting_facts,
+            declared_confidence,
+        )
+        if rule_result is not None:
+            return rule_result
 
         # ── 调用 DeepSeek 审查 ──
         facts_text = "\n".join(f"- {f}" for f in supporting_facts[:8])

@@ -109,6 +109,22 @@ class KmsManager:
     async def _build_kernel_direct_response(self, session_id: str, kind: str = "progress") -> str:
         return await self.direct_responder.build_response(session_id, kind)
 
+    def _build_route_clarification_response(self, route) -> str:
+        question = route.clarification_question or "你指的是哪一个任务？"
+        if not route.candidate_tasks:
+            return question
+        parts = []
+        for index, task in enumerate(route.candidate_tasks, start=1):
+            title = (
+                task.get("title")
+                or task.get("task_description")
+                or task.get("task_id")
+                or "未命名任务"
+            )
+            status = task.get("status") or "unknown"
+            parts.append(f"{index}. {title}（{status}）")
+        return question + "\n" + "\n".join(parts)
+
     async def dispatch_user_message(
         self,
         *,
@@ -132,16 +148,28 @@ class KmsManager:
             runtime_type=runtime_type,
             agent_id=agent_id,
         )
+        global_tasks = await self.store.list_global_tasks(
+            user_session_id=user_session.user_session_id,
+        )
         route = route_task_context(
             text,
             user_session_id=user_session.user_session_id,
             runtime_session_id=runtime_session_id,
-            tasks=await self.store.list_global_tasks(user_session_id=user_session.user_session_id),
+            tasks=global_tasks,
         )
         await self.store.save_task_route_decision(route)
+        route_target_task = next(
+            (task for task in global_tasks if task.task_id == route.target_task_id),
+            None,
+        )
+        routed_session_id = (
+            route_target_task.kernel_session_id
+            if route.routing_decision == "select_existing" and route_target_task
+            else ""
+        )
 
         session = await self._find_target_session(
-            target_session_id=target_session_id,
+            target_session_id=target_session_id or routed_session_id,
             runtime_session_id=runtime_session_id,
         )
         dispatch_context = await build_kernel_dispatch_context(self.store, session)
@@ -160,6 +188,22 @@ class KmsManager:
         wants_resume = intent.intent == "resume_previous_task"
         wants_kernel_response = intent.intent == "kernel_answerable_query"
         wants_same_task_steer = intent.intent == "same_task_steer"
+
+        if route.needs_user_clarification:
+            return DispatchDecision(
+                action="respond_from_kernel",
+                kernel_session_id=session.kernel_session_id if session else "",
+                intent_version=session.intent_version if session else 0,
+                run_id=session.active_run_id if session else "",
+                session_status=session.status.value if session else "unknown",
+                reason="task_route_needs_clarification",
+                task_action="ask_clarification",
+                task_id=session.active_task_id if session else "",
+                requires_thinker=False,
+                kernel_response=self._build_route_clarification_response(route),
+                user_session_id=user_session.user_session_id,
+                route_decision=route.routing_decision,
+            )
 
         if session and wants_kernel_response:
             kernel_response = await self._build_kernel_direct_response(
@@ -207,8 +251,67 @@ class KmsManager:
         last_paused_task_id = session.last_paused_task_id or ""
         should_submit_message = True
         resume_context: Dict[str, Any] = {}
+        use_routed_task = (
+            route.routing_decision == "select_existing"
+            and route_target_task is not None
+            and not explicit_new_task_requested
+            and not wants_new_task
+            and not wants_resume
+        )
+        routed_task = None
+        if use_routed_task:
+            routed_task = await self.store.get_task(
+                route_target_task.kernel_session_id,
+                route_target_task.task_id,
+            )
 
-        if session.active_task_id and wants_new_task:
+        if (
+            use_routed_task
+            and routed_task is not None
+            and session.active_task_id == routed_task.task_id
+        ):
+            active_task = routed_task
+            task_action = "continue_active_task"
+            reason = reason or "route_selected_active_task"
+            wants_same_task_steer = True
+        elif (
+            use_routed_task
+            and routed_task is not None
+            and session.active_task_id != routed_task.task_id
+        ):
+            if session.active_task_id:
+                paused_task = await self._snapshot_current_task(
+                    session,
+                    interrupted_run_id=previous_run_id,
+                )
+                await self._sync_global_task(
+                    paused_task,
+                    user_session_id=user_session.user_session_id,
+                    agent_id=agent_id,
+                    task_brief_version=session.intent_version,
+                    active=False,
+                )
+                last_paused_task_id = paused_task.task_id if paused_task else ""
+            else:
+                last_paused_task_id = ""
+            await self._restore_task_into_session(session.kernel_session_id, routed_task)
+            routed_task.status = TaskStatus.ACTIVE
+            routed_task.last_run_id = run_id
+            await self.store.save_task(routed_task)
+            await self._sync_global_task(
+                routed_task,
+                user_session_id=user_session.user_session_id,
+                agent_id=agent_id,
+                task_brief_version=session.intent_version + 1,
+            )
+            active_task_id = routed_task.task_id
+            action = "interrupt_and_replan" if previous_run_id else "start_new_task"
+            task_action = "continue_routed_task"
+            reason = "route_selected_existing_task"
+            should_submit_message = False
+            resume_context = self._build_resume_context(routed_task)
+            active_task = routed_task
+        elif session.active_task_id and wants_new_task:
             paused_task = await self._snapshot_current_task(session, interrupted_run_id=previous_run_id)
             await self._sync_global_task(
                 paused_task,

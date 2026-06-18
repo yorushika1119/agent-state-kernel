@@ -947,6 +947,28 @@ COMPLETION_KEYWORDS = [
 ]
 
 
+def _rule_contradicts_verified_belief(beliefs, proposed_message: str) -> Optional[str]:
+    message = proposed_message.lower()
+    no_competitor_claim = any(
+        marker in message
+        for marker in ("没有对手", "没有竞争对手", "唯一", "no competitor", "only choice")
+    )
+    if not no_competitor_claim:
+        return None
+
+    for belief in beliefs:
+        if getattr(getattr(belief, "status", None), "value", "") != "verified":
+            continue
+        claim = (belief.claim or "").lower()
+        mentions_competition = any(
+            marker in claim
+            for marker in ("amd", "竞争", "追赶", "对手", "competitor", "catching up")
+        )
+        if mentions_competition:
+            return belief.claim
+    return None
+
+
 async def gate(store, session_id: str, proposed_message: str = "") -> GateResult:
     """可见性闸门：确定 Talker 能否安全地说某句话（§5.11）。
 
@@ -985,6 +1007,14 @@ async def gate(store, session_id: str, proposed_message: str = "") -> GateResult
     # ── 第 2 层：语义检查（DeepSeek）──
     # 检查消息语义上是否与已验证信念矛盾
     beliefs = await store.get_beliefs(session_id)
+    contradicted = _rule_contradicts_verified_belief(beliefs, proposed_message)
+    if contradicted:
+        return GateResult(
+            False,
+            reason=f"与信念矛盾: {contradicted[:80]}",
+            safe_alternative=progress.summary,
+        )
+
     if beliefs and DEEPSEEK_API_KEY:
         try:
             from src.kms.model import ModelCall

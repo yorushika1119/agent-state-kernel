@@ -182,7 +182,8 @@ class SemanticConflictJudge(BaseJudge):
                 max_tokens=80,
             )
             if result and result.get("conflict"):
-                from src.schema.events import Actor, CognitiveEvent, EventType
+                from src.schema.events import Actor
+
                 se = CognitiveEvent(
                     event_id="",
                     kernel_session_id=event.kernel_session_id,
