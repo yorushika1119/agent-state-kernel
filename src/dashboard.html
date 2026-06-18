@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent State Kernel — Live Demo</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9; --dim:#8b949e; --accent:#58a6ff; --green:#3fb950; --red:#f85149; --yellow:#d2991d; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font:13px/1.5 'Segoe UI',sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; }
+  /* Chat panel */
+  #chat-panel { width:380px; background:var(--panel); border-right:1px solid var(--border); display:flex; flex-direction:column; }
+  #chat-panel h2 { padding:14px; font-size:15px; color:var(--accent); border-bottom:1px solid var(--border); }
+  #chat-msgs { flex:1; overflow-y:auto; padding:10px; }
+  .chat-msg { margin-bottom:10px; }
+  .chat-user { background:rgba(88,166,255,.1); padding:10px 12px; border-radius:8px 8px 2px 8px; margin-left:20px; }
+  .chat-bot { background:var(--bg); padding:10px 12px; border-radius:8px 8px 8px 2px; margin-right:20px; border:1px solid var(--border); }
+  .chat-step { color:var(--yellow); font-size:11px; padding:4px 8px; margin:4px 20px; background:rgba(210,153,29,.08); border-radius:6px; border-left:2px solid var(--yellow); }
+  .chat-step.done { color:var(--green); border-left-color:var(--green); background:rgba(63,185,80,.06); }
+  #chat-input { display:flex; padding:10px; border-top:1px solid var(--border); gap:6px; }
+  #chat-input input { flex:1; padding:8px 12px; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:6px; }
+  #chat-input input:focus { outline:none; border-color:var(--accent); }
+  #chat-send { padding:8px 16px; background:var(--accent); border:none; color:#fff; border-radius:6px; cursor:pointer; }
+  #chat-presets { padding:8px 10px; display:flex; flex-wrap:wrap; gap:4px; }
+  #chat-presets button { padding:4px 10px; border:1px solid var(--border); background:none; color:var(--dim); border-radius:12px; cursor:pointer; font-size:11px; }
+  #chat-presets button:hover { border-color:var(--accent); color:var(--text); }
+  /* State panel */
+  #main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #tabs { display:flex; padding:0 14px; border-bottom:1px solid var(--border); }
+  #tabs button { padding:8px 14px; border:none; background:none; color:var(--dim); cursor:pointer; font-size:12px; border-bottom:2px solid transparent; }
+  #tabs button.active { color:var(--text); border-bottom-color:var(--accent); }
+  #view { flex:1; overflow-y:auto; padding:14px; }
+  #event-log-panel { border-top:1px solid var(--border); padding:10px 14px; }
+  #event-log-panel h4 { font-size:12px; color:var(--dim); margin-bottom:4px; }
+  #event-log { max-height:180px; overflow-y:auto; font-family:'Cascadia Code',monospace; font-size:11px; }
+  .ev { padding:1px 0; }
+  .ev-v { color:var(--dim); margin-right:4px; }
+  .ev-type { color:var(--accent); }
+  .ev-actor { color:var(--yellow); }
+  .ev-sum { color:var(--text); }
+  .card { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:10px; }
+  .card h4 { font-size:11px; color:var(--dim); text-transform:uppercase; margin-bottom:6px; }
+  .badge { padding:1px 7px; border-radius:9px; font-size:10px; font-weight:600; }
+  .b-high,.b-verified { color:var(--green); background:rgba(63,185,80,.12); }
+  .b-medium,.b-likely { color:var(--yellow); background:rgba(210,153,29,.12); }
+  .b-low,.b-unverified { color:var(--dim); background:rgba(139,148,158,.12); }
+  .b-conflicting { color:var(--red); background:rgba(248,81,73,.12); }
+  .step { display:inline-block; padding:3px 8px; border-radius:10px; font-size:11px; margin:2px; }
+  .st-running { background:rgba(88,166,255,.12); color:var(--accent); border:1px solid var(--accent); }
+  .st-completed { background:rgba(63,185,80,.12); color:var(--green); border:1px solid var(--green); }
+  .st-pending { background:transparent; color:var(--dim); border:1px solid var(--border); }
+  .bar { height:5px; background:var(--border); border-radius:3px; margin-top:3px; }
+  .bar-fill { height:100%; border-radius:3px; background:var(--accent); }
+  .spinner { display:inline-block; width:12px; height:12px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .6s linear infinite; margin-right:6px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="chat-panel">
+  <h2>💬 Talk to Kernel</h2>
+  <div id="chat-presets">
+    <button onclick="ask('帮我调研Cursor和Claude Code哪个更适合团队使用')">AI编程工具</button>
+    <button onclick="ask('核聚变能源2026年能商用吗')">核聚变</button>
+    <button onclick="ask('特斯拉2026年Q2交付了多少辆车')">特斯拉Q2</button>
+  </div>
+  <div id="chat-msgs">
+    <div class="chat-bot">👋 我是 Kernel 演示。输入一个问题，我会自动完成搜索、提取证据、形成信念的全流程。右侧面板实时显示内部状态。</div>
+  </div>
+  <div id="chat-input">
+    <input id="chat-text" placeholder="输入你的问题..." onkeydown="if(event.key==='Enter')ask()">
+    <button id="chat-send" onclick="ask()">发送</button>
+  </div>
+</div>
+
+<div id="main">
+  <div id="tabs">
+    <button class="active" onclick="switchTab('overview')">📋 Pipeline State</button>
+    <button onclick="switchTab('talker-view')">💬 Talker View</button>
+    <button onclick="switchTab('gate')">🚪 Gate</button>
+  </div>
+  <div id="view"><div style="color:var(--dim);padding:20px;text-align:center">等待问题...</div></div>
+  <div id="event-log-panel">
+    <h4>📜 Event Log <span id="ev-count" style="color:var(--dim)"></span> <span id="ev-live" style="color:var(--green);font-size:11px;display:none">● LIVE</span></h4>
+    <div id="event-log"></div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let currentSid = '';
+let currentTab = 'overview';
+let polling = null;
+
+function addChat(msg, cls='chat-bot') {
+  const d = document.getElementById('chat-msgs');
+  const el = document.createElement('div');
+  el.className = 'chat-msg ' + cls;
+  el.innerHTML = msg;
+  d.appendChild(el);
+  d.scrollTop = d.scrollHeight;
+}
+
+function addStep(msg, done=false) {
+  const d = document.getElementById('chat-msgs');
+  const el = document.createElement('div');
+  el.className = 'chat-step' + (done?' done':'');
+  el.innerHTML = (done?'✅ ':'<span class="spinner"></span>') + msg;
+  d.appendChild(el);
+  d.scrollTop = d.scrollHeight;
+  return el;
+}
+
+function removeLastStep() {
+  const steps = document.querySelectorAll('.chat-step');
+  if (steps.length) steps[steps.length-1].remove();
+}
+
+async function ask(question) {
+  const text = question || document.getElementById('chat-text').value.trim();
+  if (!text) return;
+  if (!question) document.getElementById('chat-text').value = '';
+
+  addChat(text, 'chat-user');
+  const s1 = addStep('创建会话...');
+  const s2 = addStep('Normalize: 自然语言→结构化意图');
+  const s3 = addStep('搜索相关信息...');
+  const s4 = addStep('提交证据 → KMS自动评分');
+  const s5 = addStep('KMS模型Judge审查中...');
+  const s6 = addStep('形成信念 → BeliefReviewJudge');
+  const s7 = addStep('生成Talker摘要');
+
+  document.getElementById('ev-live').style.display = 'inline';
+
+  try {
+    const r = await fetch(API + '/demo/run', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({question:text})
+    });
+    const data = await r.json();
+
+    // Mark steps complete
+    [s1,s2,s3,s4,s5,s6,s7].forEach(s => {
+      s.classList.add('done');
+      s.innerHTML = s.innerHTML.replace('<span class="spinner"></span>','✅ ');
+    });
+
+    currentSid = data.session_id;
+    document.getElementById('ev-live').style.display = 'none';
+
+    // Show result
+    let resultHtml = `<b>${data.summary||'完成'}</b>`;
+    if (data.safe_facts?.length) {
+      resultHtml += '<br><br>✅ 确认结论:<br>' + data.safe_facts.map(f=>'• '+f).join('<br>');
+    }
+    if (data.unsafe_claims?.length) {
+      resultHtml += '<br><br>⚠️ 待验证:<br>' + data.unsafe_claims.map(c=>'• '+c).join('<br>');
+    }
+    addChat(resultHtml);
+
+    await refreshAll();
+
+    // Start live polling
+    if (polling) clearInterval(polling);
+    polling = setInterval(refreshAll, 3000);
+  } catch(e) {
+    addChat('❌ Error: ' + e.message);
+    document.getElementById('ev-live').style.display = 'none';
+  }
+}
+
+async function refreshAll() {
+  if (!currentSid) return;
+  await Promise.all([loadView(), loadEvents()]);
+}
+
+async function loadView() {
+  if (!currentSid) return;
+  const data = await fetch(API + `/kms/sessions/${currentSid}/views/thinker`).then(r=>r.json());
+  const el = document.getElementById('view');
+  if (!data) return;
+
+  const intent = data.intent||{};
+  const plan = data.plan||{};
+  const steps = (plan.steps||[]).map(s => {
+    let c = s.status==='running'?'st-running':s.status==='completed'?'st-completed':'st-pending';
+    return `<span class="step ${c}">${s.name||s.step_id} ${s.status==='completed'?'✓':s.status==='running'?'↻':''}</span>`;
+  }).join(' ');
+
+  const evidence = (data.evidence||[]).map(e =>
+    `<div style="padding:4px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;">
+      <span>📄 ${e.title||e.evidence_id}</span>
+      <span class="badge b-${e.reliability}">${e.reliability}</span>
+    </div>`
+  ).join('');
+
+  const beliefs = (data.beliefs||[]).map(b => {
+    const pct = Math.round(b.confidence*100);
+    return `<div style="padding:4px 0;border-bottom:1px solid var(--border);">
+      <div style="display:flex;justify-content:space-between;">
+        <span>🧠 ${b.claim}</span>
+        <span class="badge b-${b.status}">${b.status}</span>
+      </div>
+      <div class="bar"><div class="bar-fill" style="width:${pct}%;background:${pct>70?'var(--green)':pct>40?'var(--yellow)':'var(--red)'}"></div></div>
+    </div>`;
+  }).join('');
+
+  if (currentTab === 'overview') {
+    el.innerHTML = `
+      <div class="card"><h4>Intent</h4><div style="font-weight:600;">${intent.goal||'(none)'}</div></div>
+      <div class="card"><h4>Plan</h4>${steps||'<span style="color:var(--dim)">None</span>'}</div>
+      <div class="card"><h4>Evidence (${data.evidence?.length||0})</h4>${evidence||'<span style="color:var(--dim)">None</span>'}</div>
+      <div class="card"><h4>Beliefs (${data.beliefs?.length||0})</h4>${beliefs||'<span style="color:var(--dim)">None</span>'}</div>
+      <button class="btn btn-outline" onclick="rebuild()" style="padding:6px 12px;border:1px solid var(--border);background:none;color:var(--text);border-radius:5px;cursor:pointer">🔄 Rebuild</button>
+    `;
+  } else if (currentTab === 'talker-view') {
+    const t = await fetch(API + `/kms/sessions/${currentSid}/views/talker`).then(r=>r.json());
+    el.innerHTML = t ? `
+      <div class="card"><h4>摘要</h4><div>${t.summary||'(none)'}</div></div>
+      <div class="card"><h4>Status</h4>${t.status} · ${t.stage||''}</div>
+      <div class="card"><h4>✅ Safe</h4>${t.safe_facts?.map(f=>`<div style="padding:2px 0">${f}</div>`).join('')||'<span style="color:var(--dim)">None</span>'}</div>
+      <div class="card"><h4>⚠️ Unsafe</h4>${t.unsafe_claims?.map(c=>`<div style="padding:2px 0;color:var(--yellow)">${c}</div>`).join('')||'<span style="color:var(--dim)">None</span>'}</div>
+    ` : '<div style="color:var(--dim);padding:20px">None</div>';
+  } else if (currentTab === 'gate') {
+    el.innerHTML = `
+      <div class="card"><h4>Gate Test</h4>
+        <div style="display:flex;gap:6px;">
+          <input id="gate-msg" placeholder="Talker says..." style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:5px" onkeydown="if(event.key==='Enter')testGate()">
+          <button onclick="testGate()" style="padding:6px 14px;background:var(--accent);border:none;color:#fff;border-radius:5px;cursor:pointer">Check</button>
+        </div>
+        <div id="gate-result" style="margin-top:8px"></div>
+      </div>
+    `;
+  }
+}
+
+async function testGate() {
+  const msg = document.getElementById('gate-msg')?.value;
+  if (!msg||!currentSid) return;
+  const r = await fetch(API+'/kms/ask-can-say',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:currentSid,proposed_message:msg})}).then(r=>r.json());
+  const el = document.getElementById('gate-result');
+  el.innerHTML = r?.allowed
+    ? '<div style="background:rgba(63,185,80,.08);color:var(--green);padding:8px;border-radius:6px;border:1px solid rgba(63,185,80,.2)">✅ Allowed</div>'
+    : `<div style="background:rgba(248,81,73,.08);color:var(--red);padding:8px;border-radius:6px;border:1px solid rgba(248,81,73,.2)">🚫 Blocked — ${r?.reason||''}</div>`;
+}
+
+async function loadEvents() {
+  if (!currentSid) return;
+  const data = await fetch(API + `/kernel/sessions/${currentSid}/events?limit=100`).then(r=>r.json());
+  const el = document.getElementById('event-log');
+  document.getElementById('ev-count').textContent = data?.length ? `(${data.length})` : '';
+  if (!Array.isArray(data)) return;
+  el.innerHTML = data.map(e => {
+    const p = typeof e.payload === 'string' ? JSON.parse(e.payload||'{}') : (e.payload||{});
+    const s = p.goal||p.claim||p.tool||p.step_id||p.title||p.input_summary||'';
+    return `<div class="ev"><span class="ev-v">v${e.state_version}</span><span class="ev-type">${e.event_type}</span> <span class="ev-actor">[${e.actor}]</span> <span class="ev-sum">${String(s).slice(0,50)}</span></div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function rebuild() {
+  if (!currentSid) return;
+  const r = await fetch(API+`/kernel/sessions/${currentSid}/rebuild`,{method:'POST'}).then(r=>r.json());
+  if (r) await refreshAll();
+}
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  loadView();
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from src.kms.intent_classifier import (
+    classify_dispatch_intent,
+    classify_dispatch_intent_with_llm,
+)
+
+
+class FakeModel:
+    def __init__(self, result):
+        self.result = result
+        self.calls = 0
+
+    async def ask_json(self, system: str, user: str, max_tokens: int = 200):
+        self.calls += 1
+        return self.result
+
+
+def active_session():
+    return SimpleNamespace(
+        status=SimpleNamespace(value="running"),
+        active_run_id="run_active",
+        active_task_id="task_active",
+        last_paused_task_id="",
+        intent_version=1,
+    )
+
+
+def test_rule_fast_path_classifies_clear_progress_query():
+    intent = classify_dispatch_intent("现在完成到哪一步了？", session=active_session())
+
+    assert intent.intent == "kernel_answerable_query"
+    assert intent.kernel_answer_kind == "progress"
+    assert intent.source == "rule"
+
+
+@pytest.mark.asyncio
+async def test_rule_fast_path_does_not_call_llm():
+    model = FakeModel(
+        {
+            "intent": "new_task",
+            "confidence": 0.99,
+            "reason": "should not be used",
+        }
+    )
+
+    intent = await classify_dispatch_intent_with_llm(
+        "现在完成到哪一步了？",
+        session=active_session(),
+        model_call=model,
+    )
+
+    assert intent.intent == "kernel_answerable_query"
+    assert intent.source == "rule"
+    assert model.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_work_request_marker_is_new_task_without_llm():
+    model = FakeModel(
+        {
+            "intent": "same_task_steer",
+            "confidence": 0.99,
+            "reason": "should not be used",
+        }
+    )
+
+    intent = await classify_dispatch_intent_with_llm(
+        "research beta",
+        session=active_session(),
+        model_call=model,
+    )
+
+    assert intent.intent == "new_task"
+    assert intent.reason == "work_request_marker"
+    assert intent.source == "rule"
+    assert model.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_classifies_complex_kernel_answerable_query():
+    model = FakeModel(
+        {
+            "intent": "kernel_answerable_query",
+            "confidence": 0.86,
+            "kernel_answer_kind": "evidence",
+            "reason": "用户询问当前已有依据，不是在请求新任务",
+        }
+    )
+
+    intent = await classify_dispatch_intent_with_llm(
+        "先别动当前任务，我想判断现在掌握的材料是否足以对外说明。",
+        session=active_session(),
+        model_call=model,
+    )
+
+    assert intent.intent == "kernel_answerable_query"
+    assert intent.kernel_answer_kind == "evidence"
+    assert intent.source == "llm"
+    assert model.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_low_confidence_llm_result_falls_back_to_rule_result():
+    model = FakeModel(
+        {
+            "intent": "new_task",
+            "confidence": 0.5,
+            "reason": "low confidence",
+        }
+    )
+
+    intent = await classify_dispatch_intent_with_llm(
+        "这个事情怎么说比较稳？",
+        session=active_session(),
+        model_call=model,
+    )
+
+    assert intent.intent == "uncertain"
+    assert intent.source == "rule"
+    assert model.calls == 1
