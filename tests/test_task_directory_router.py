@@ -12,6 +12,7 @@ from src.kernel.engine import KernelEngine
 from src.kms.manager import KmsManager
 from src.kms.task_context_router import route_task_context
 from src.schema.events import EventSubmission
+from src.schema.state import GlobalTask, TaskStatus
 from src.stores.sqlite_store import SqliteStore
 
 
@@ -207,8 +208,6 @@ async def test_ambiguous_router_target_asks_clarification_without_interrupting()
 
 
 def test_task_context_router_selects_by_recent_other_and_hints():
-    from src.schema.state import GlobalTask
-
     task_a = GlobalTask(
         task_id="task_a",
         kernel_session_id="ask_a",
@@ -254,3 +253,128 @@ def test_task_context_router_selects_by_recent_other_and_hints():
     )
     assert unclear.routing_decision == "ask_clarification"
     assert unclear.needs_user_clarification is True
+
+
+def test_task_context_router_handles_new_task_status_and_token_overlap():
+    task_a = GlobalTask(
+        task_id="task_a",
+        kernel_session_id="ask_a",
+        user_session_id="us_1",
+        title="payment webhook retry policy",
+        task_description="fix webhook retries and idempotency handling",
+        routing_hints=["payment", "webhook", "retry"],
+        status=TaskStatus.PAUSED,
+        last_user_touch_at=datetime(2026, 6, 18, 10, 0, tzinfo=timezone.utc),
+    )
+    task_b = GlobalTask(
+        task_id="task_b",
+        kernel_session_id="ask_b",
+        user_session_id="us_1",
+        title="vector search index migration",
+        task_description="migrate embeddings index and query path",
+        routing_hints=["vector", "search", "index"],
+        status=TaskStatus.ACTIVE,
+        last_user_touch_at=datetime(2026, 6, 18, 11, 0, tzinfo=timezone.utc),
+    )
+
+    new_task = route_task_context(
+        "new task: write a deployment checklist",
+        user_session_id="us_1",
+        runtime_session_id="rt",
+        tasks=[task_b, task_a],
+    )
+    assert new_task.routing_decision == "create_new"
+    assert new_task.needs_user_clarification is False
+
+    status = route_task_context(
+        "current status?",
+        user_session_id="us_1",
+        runtime_session_id="rt",
+        tasks=[task_b, task_a],
+    )
+    assert status.routing_decision == "select_existing"
+    assert status.target_task_id == "task_b"
+    assert status.time_reason["matched_by"] == "active_task"
+
+    by_tokens = route_task_context(
+        "update webhook retry handling",
+        user_session_id="us_1",
+        runtime_session_id="rt",
+        tasks=[task_b, task_a],
+    )
+    assert by_tokens.routing_decision == "select_existing"
+    assert by_tokens.target_task_id == "task_a"
+
+    chinese_work = route_task_context(
+        "请调研 delta 安全审计",
+        user_session_id="us_1",
+        runtime_session_id="rt",
+        tasks=[task_b, task_a],
+    )
+    assert chinese_work.routing_decision == "create_new"
+    assert chinese_work.needs_user_clarification is False
+
+
+@pytest.mark.asyncio
+async def test_explicit_new_task_is_not_blocked_by_router_clarification():
+    store, _engine, manager = await build_runtime()
+    try:
+        await manager.dispatch_user_message(
+            text="research payment webhook retry policy",
+            runtime_session_id="rt-router-new-task",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        await manager.dispatch_user_message(
+            text="new task: research vector search index migration",
+            runtime_session_id="rt-router-new-task",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        third = await manager.dispatch_user_message(
+            text="new task: write a deployment checklist",
+            runtime_session_id="rt-router-new-task",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+
+        assert third.route_decision == "create_new"
+        assert third.action == "start_new_task"
+        assert third.task_action == "start_new_task"
+        assert third.requires_thinker is True
+        assert third.thinker_dispatch_id
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_clear_chinese_work_request_bypasses_router_clarification():
+    store, _engine, manager = await build_runtime()
+    try:
+        await manager.dispatch_user_message(
+            text="research payment webhook retry policy",
+            runtime_session_id="rt-router-chinese-work",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        await manager.dispatch_user_message(
+            text="research vector search index migration",
+            runtime_session_id="rt-router-chinese-work",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        third = await manager.dispatch_user_message(
+            text="请调研 delta 安全审计",
+            runtime_session_id="rt-router-chinese-work",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+
+        assert third.action == "interrupt_and_replan"
+        assert third.task_action == "start_new_task"
+        assert third.route_decision == "create_new"
+        assert third.requires_thinker is True
+        assert third.thinker_dispatch_id
+        assert third.kernel_response == ""
+    finally:
+        await store.close()

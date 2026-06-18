@@ -188,8 +188,13 @@ class KmsManager:
         wants_resume = intent.intent == "resume_previous_task"
         wants_kernel_response = intent.intent == "kernel_answerable_query"
         wants_same_task_steer = intent.intent == "same_task_steer"
+        route_clarification_applies = (
+            route.needs_user_clarification
+            and not wants_new_task
+            and not wants_resume
+        )
 
-        if route.needs_user_clarification:
+        if route_clarification_applies:
             return DispatchDecision(
                 action="respond_from_kernel",
                 kernel_session_id=session.kernel_session_id if session else "",
