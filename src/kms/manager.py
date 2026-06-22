@@ -10,6 +10,7 @@ from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
 from src.kms.dispatch_lifecycle_coordinator import DispatchLifecycleCoordinator
 from src.kms.dispatch_context import build_kernel_dispatch_context
 from src.kms.intent_classifier import classify_dispatch_intent_with_llm
+from src.kms.kernel_direct_reply_coordinator import KernelDirectReplyCoordinator
 from src.kms.kernel_direct_responder import KernelDirectResponder
 from src.kms.route_clarification_coordinator import RouteClarificationCoordinator
 from src.kms.task_coordinators import InterruptCoordinator, ResumeCoordinator
@@ -47,6 +48,10 @@ class KmsManager:
         self.lifecycle = DispatchLifecycleCoordinator(store, engine)
         self.conversation_refs = ConversationRefCoordinator(store)
         self.route_clarifications = RouteClarificationCoordinator(store)
+        self.direct_replies = KernelDirectReplyCoordinator(
+            self.direct_responder,
+            self.conversation_refs,
+        )
         self.enable_llm_router = (
             os.getenv("KMS_ENABLE_LLM_ROUTER") == "1"
             if enable_llm_router is None
@@ -119,19 +124,6 @@ class KmsManager:
                 task.task_id,
                 active=active,
             )
-
-    async def _build_kernel_direct_response(
-        self,
-        session_id: str,
-        kind: str = "progress",
-        *,
-        target_task_id: str = "",
-    ) -> str:
-        return await self.direct_responder.build_response(
-            session_id,
-            kind,
-            target_task_id=target_task_id,
-        )
 
     async def dispatch_user_message(
         self,
@@ -219,39 +211,14 @@ class KmsManager:
                 if route.routing_decision == "select_existing" and route.target_task_id
                 else session.active_task_id or ""
             )
-            kernel_response = await self._build_kernel_direct_response(
-                session.kernel_session_id,
-                intent.kernel_answer_kind or "progress",
+            kernel_response = await self.direct_replies.build_and_record(
+                session=session,
+                user_text=text,
+                user_session_id=user_session.user_session_id,
+                route=route,
+                kind=intent.kernel_answer_kind or "progress",
                 target_task_id=response_task_id,
-            )
-            await self.conversation_refs.record(
-                text_summary=text,
-                user_session_id=user_session.user_session_id,
-                kernel_session_id=session.kernel_session_id,
-                task_id=response_task_id,
-                run_id=session.active_run_id or "",
-                route_id=route.route_id,
                 runtime_refs=runtime_refs,
-                metadata={
-                    "route_decision": route.routing_decision,
-                    "task_action": "respond_from_kernel",
-                    "kernel_answer_kind": intent.kernel_answer_kind or "progress",
-                },
-            )
-            await self.conversation_refs.record(
-                text_summary=kernel_response,
-                user_session_id=user_session.user_session_id,
-                kernel_session_id=session.kernel_session_id,
-                task_id=response_task_id,
-                run_id=session.active_run_id or "",
-                role="assistant",
-                source="kernel_direct_response",
-                route_id=route.route_id,
-                metadata={
-                    "route_decision": route.routing_decision,
-                    "task_action": "respond_from_kernel",
-                    "kernel_answer_kind": intent.kernel_answer_kind or "progress",
-                },
             )
             return DispatchDecision(
                 action="respond_from_kernel",
@@ -381,32 +348,15 @@ class KmsManager:
                 resume_task = await self.store.get_latest_paused_task(session.kernel_session_id)
             if resume_task is None:
                 response_text = "当前没有可继续的已挂起任务。"
-                await self.conversation_refs.record(
-                    text_summary=text,
+                await self.direct_replies.record_static_reply(
+                    session=session,
+                    user_text=text,
+                    response_text=response_text,
                     user_session_id=user_session.user_session_id,
-                    kernel_session_id=session.kernel_session_id,
+                    route=route,
                     task_id=session.active_task_id or "",
-                    run_id=session.active_run_id or "",
-                    route_id=route.route_id,
                     runtime_refs=runtime_refs,
                     metadata={
-                        "route_decision": route.routing_decision,
-                        "task_action": "respond_from_kernel",
-                        "reason": "no_paused_task_to_resume",
-                    },
-                )
-                await self.conversation_refs.record(
-                    text_summary=response_text,
-                    user_session_id=user_session.user_session_id,
-                    kernel_session_id=session.kernel_session_id,
-                    task_id=session.active_task_id or "",
-                    run_id=session.active_run_id or "",
-                    role="assistant",
-                    source="kernel_direct_response",
-                    route_id=route.route_id,
-                    metadata={
-                        "route_decision": route.routing_decision,
-                        "task_action": "respond_from_kernel",
                         "reason": "no_paused_task_to_resume",
                     },
                 )
