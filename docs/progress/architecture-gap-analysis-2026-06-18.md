@@ -1017,7 +1017,7 @@ python -m pytest
 当前边界：
 - 这个 smoke 使用可控 agent 触发真实子进程工具，不依赖真实大模型选择工具。
 - 浏览器工具、文件写入工具等更复杂工具还没有逐一压测。
-- Gateway proxy mode 的 dispatch 生命周期仍未接入本轮验证。
+- Gateway proxy mode 的 dispatch 生命周期已在后续 2026-06-22 进度中接入第一版。
 
 ## 2026-06-18 第十三阶段：evidence / execution 原生 task_id 归属
 
