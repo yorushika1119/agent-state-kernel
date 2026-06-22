@@ -264,6 +264,22 @@ def route_task_context(
             ranked=ranked,
         )
 
+    if _contains_any(content, OTHER_REFERENCES) and len(ranked) > 1:
+        current = _single_active_task(candidates) or ranked[0][2]
+        other = _latest_task(candidates, exclude_task_id=current.task_id)
+        if other:
+            selected = next(item for item in ranked if item[2].task_id == other.task_id)
+            return _select(
+                content,
+                user_session_id=user_session_id,
+                runtime_session_id=runtime_session_id,
+                task=selected[2],
+                confidence=0.72,
+                matched_hints=selected[1],
+                ranked=ranked,
+                time_reason={"reference": "other", "matched_by": "other_recent_task"},
+            )
+
     if _contains_any(content, STATUS_QUERY_REFERENCES):
         second_score = ranked[1][0] if len(ranked) > 1 else 0.0
         if best[0] >= 0.45 and best[0] - second_score >= 0.12:
@@ -299,22 +315,6 @@ def route_task_context(
                 matched_hints=["single_task_status_query"],
                 ranked=ranked,
                 time_reason={"reference": "status_query", "matched_by": "single_task"},
-            )
-
-    if _contains_any(content, OTHER_REFERENCES) and len(ranked) > 1:
-        current = _single_active_task(candidates) or ranked[0][2]
-        other = _latest_task(candidates, exclude_task_id=current.task_id)
-        if other:
-            selected = next(item for item in ranked if item[2].task_id == other.task_id)
-            return _select(
-                content,
-                user_session_id=user_session_id,
-                runtime_session_id=runtime_session_id,
-                task=selected[2],
-                confidence=0.72,
-                matched_hints=selected[1],
-                ranked=ranked,
-                time_reason={"reference": "other", "matched_by": "other_recent_task"},
             )
 
     if _contains_any(content, RECENT_REFERENCES):

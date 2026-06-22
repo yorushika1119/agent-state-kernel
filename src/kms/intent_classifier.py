@@ -371,6 +371,19 @@ def classify_dispatch_intent(
             reason="explicit_new_task_mode",
         )
 
+    has_kernel_context = bool(context.has_session) if context is not None else session is not None
+
+    if has_kernel_context:
+        for kind, reason, confidence, markers in KERNEL_ANSWER_RULES:
+            if _contains_any(content, markers):
+                return DispatchIntent(
+                    intent="kernel_answerable_query",
+                    confidence=confidence,
+                    source="rule",
+                    reason=reason,
+                    kernel_answer_kind=kind,
+                )
+
     if _contains_any(content, EXPLICIT_NEW_TASK_MARKERS):
         return DispatchIntent(
             intent="new_task",
@@ -386,19 +399,6 @@ def classify_dispatch_intent(
             source="rule",
             reason="resume_previous_task_marker",
         )
-
-    has_kernel_context = bool(context.has_session) if context is not None else session is not None
-
-    if has_kernel_context:
-        for kind, reason, confidence, markers in KERNEL_ANSWER_RULES:
-            if _contains_any(content, markers):
-                return DispatchIntent(
-                    intent="kernel_answerable_query",
-                    confidence=confidence,
-                    source="rule",
-                    reason=reason,
-                    kernel_answer_kind=kind,
-                )
 
     if _contains_any(content, SAME_TASK_STEER_MARKERS):
         return DispatchIntent(

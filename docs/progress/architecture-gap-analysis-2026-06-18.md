@@ -1282,3 +1282,47 @@ python -m pytest -o addopts='' -q tests\agent\test_system_prompt.py
 - 本阶段只改 Thinker 的系统提示，不改 dispatch、Gateway、CLI 执行逻辑。
 - 这能降低真实模型解释架构时的跑偏概率，但不能替代后续真实 LLM smoke。
 - Hermes 真实目录只做本地提交，不推远端。
+
+## 2026-06-22：真实架构词汇 smoke / 任务路由收敛 / 旧表读取冻结
+
+本阶段继续按新版架构文档推进，不改动已经稳定的 dispatch 生命周期，只收敛三个边界问题。
+
+真实 smoke 结论：
+- 使用真实 Hermes + DeepSeek 跑 `scripts\live_interrupt_demo.py --real-model --scenario interrupt`。
+- 旧任务被打断后标记为 `failed`，新 dispatch 标记为 `completed`。
+- 最终回答通过 `ARCHITECTURE_GLOSSARY_CHECK: passed`。
+- 模型现在能正确区分：Kernel 是底层状态内核，KMS 是上层管理调度层。
+
+KMS 路由修正：
+- 修复“另一个任务当前进度？”被误判为新任务的问题。
+- intent classifier 现在会先识别已有 Kernel 上下文中的状态/进度查询，再处理“另一个任务”这类新任务标记。
+- Task Context Router 现在先处理“另一个 / 不是这个”指代，再回退到 active task 状态查询。
+- 新增回归：当任务 B 正在 active 时，用户问“另一个任务当前进度？”，KMS 会直接回答任务 A 的进度，不打断任务 B。
+
+旧表读取冻结：
+- 新增扫描测试，禁止业务层直接 SQL 读旧表：
+  - `intent_states`
+  - `plan_states`
+  - `belief_items`
+  - `commitments`
+- 旧表名只允许在 `sqlite_store.py` 内部作为兼容存储实现出现。
+- `StateSourceAudit` 新增：
+  - `legacy_direct_sql_frozen=true`
+  - `legacy_tables_removable=false`
+
+验证结果：
+```text
+python -m pytest -o addopts='' -q tests\test_intent_classifier.py tests\test_task_directory_router.py tests\test_state_source_audit.py
+31 passed
+
+python -m pytest -o addopts='' -q tests\gateway\test_interrupt_demo_output.py tests\agent\test_system_prompt.py
+13 passed
+
+python scripts\live_interrupt_demo.py --real-model --scenario interrupt
+ARCHITECTURE_GLOSSARY_CHECK: passed
+```
+
+当前边界：
+- 旧表还不能物理删除，因为仍承担兼容输出和历史数据过渡。
+- 本阶段没有做完整历史数据迁移。
+- 下一步应把业务层剩余的兼容 getter 调用逐步替换成新版 getter，然后再评估旧表删除。

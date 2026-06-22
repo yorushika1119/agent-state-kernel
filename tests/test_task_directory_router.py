@@ -487,6 +487,18 @@ async def test_direct_kernel_response_uses_router_target_task_scope():
         assert "迁移向量索引" not in progress_reply.kernel_response
         assert "local.b" not in progress_reply.kernel_response
 
+        other_progress_reply = await manager.dispatch_user_message(
+            text="另一个任务当前进度？",
+            runtime_session_id="rt-router-direct-scope",
+            runtime_type="gateway",
+            agent_id="agent-router",
+        )
+        assert other_progress_reply.action == "respond_from_kernel"
+        assert other_progress_reply.task_id == first.task_id
+        assert other_progress_reply.run_id == second.run_id
+        assert "收集 webhook 证据" in other_progress_reply.kernel_response
+        assert "迁移向量索引" not in other_progress_reply.kernel_response
+
         claims_reply = await manager.dispatch_user_message(
             text="支付 webhook 那个有什么结论？",
             runtime_session_id="rt-router-direct-scope",

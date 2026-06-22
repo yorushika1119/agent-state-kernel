@@ -62,6 +62,25 @@ def test_rule_fast_path_classifies_explicit_new_task_and_resume_markers():
     assert resume.reason == "resume_previous_task_marker"
 
 
+def test_kernel_answerable_query_wins_over_other_task_marker():
+    intent = classify_dispatch_intent("另一个任务当前进度？", session=active_session())
+
+    assert intent.intent == "kernel_answerable_query"
+    assert intent.kernel_answer_kind == "progress"
+    assert intent.reason == "kernel_progress_query_marker"
+
+
+def test_explicit_new_task_mode_still_overrides_kernel_answer_marker():
+    intent = classify_dispatch_intent(
+        "另一个任务当前进度？",
+        mode="new_task",
+        session=active_session(),
+    )
+
+    assert intent.intent == "new_task"
+    assert intent.reason == "explicit_new_task_mode"
+
+
 @pytest.mark.asyncio
 async def test_rule_fast_path_does_not_call_llm():
     model = FakeModel(

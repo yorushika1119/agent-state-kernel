@@ -68,6 +68,7 @@ class StateSourceAudit:
 
     def __init__(self, mappings=STATE_SOURCE_MAPPINGS):
         self.mappings = tuple(mappings)
+        self.legacy_direct_sql_frozen = True
 
     def can_switch_all(self) -> bool:
         return all(mapping.can_switch_primary for mapping in self.mappings)
@@ -82,6 +83,8 @@ class StateSourceAudit:
     def as_dict(self) -> dict:
         return {
             "can_switch_all": self.can_switch_all(),
+            "legacy_direct_sql_frozen": self.legacy_direct_sql_frozen,
+            "legacy_tables_removable": False,
             "mappings": [
                 {
                     "new_model": mapping.new_model,
