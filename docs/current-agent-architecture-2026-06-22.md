@@ -91,10 +91,10 @@ flowchart TD
 | `task_flows` | task-first 计划/流程主读模型 |
 | `claim_items` | task-first claim 主读模型 |
 | `todo_obligations` | task-first todo 主读模型 |
-| `intent_states` | 旧架构意图状态，当前作为兼容输出 |
-| `plan_states` | 旧架构计划状态，当前作为兼容输出 |
-| `belief_items` | 旧架构 belief 状态，当前作为兼容输出 |
-| `commitments` | 旧架构 commitment 状态，当前作为兼容输出 |
+| `intent_states` | 旧架构意图状态，当前只作为历史数据读取 fallback |
+| `plan_states` | 旧架构计划状态，当前只作为历史数据读取 fallback |
+| `belief_items` | 旧架构 belief 状态，当前只作为历史数据读取 fallback |
+| `commitments` | 旧架构 commitment 状态，当前只作为历史数据读取 fallback |
 | `thinker_dispatches` | KMS 下发给 Thinker 的任务单 |
 | `observer_notifications` | 通知 Observer / Talker 主动刷新或汇报 |
 | `task_conversation_refs` | task 级消息摘要和 runtime message 引用，不保存完整 transcript |
@@ -103,8 +103,10 @@ flowchart TD
 当前状态源结论：
 
 - `task_brief_states / task_flows / claim_items / todo_obligations` 已经切为主读模型。
-- `save_intent / save_plan / save_belief / save_commitment` 现在先写新版表，再写旧表兼容输出。
-- `intent_states / plan_states / belief_items / commitments` 暂不删除，用于兼容旧接口和 debug 输出。
+- `save_intent / save_plan / save_belief / save_commitment` 默认只写新版表。
+- `KMS_WRITE_LEGACY_STATE_TABLES=1` 可临时恢复旧表双写，用于兼容排查。
+- `intent_states / plan_states / belief_items / commitments` 暂不删除，只用于历史数据 fallback。
+- `legacy_debug` 只保留在 `manager_view` 和 `debug_view`，不再暴露给 `thinker_view`。
 - `GET /kms/state-source-audit` 可查看当前主读切换状态。
 
 ## 5. 用户消息主流程
@@ -162,11 +164,12 @@ flowchart TD
   -> 每个 task 可以关联 kernel_session / task snapshot / conversation refs
 ```
 
-但当前还不是彻底的 task-first 存储：
+当前已经进入 task-first 主存储阶段：
 
-- 旧 `intent/plan/belief/commitment` 仍主要按 `kernel_session_id` 存。
-- 新 `task_brief/task_flow/claim/todo` 是兼容层和影子层。
-- `task_conversation_refs` 已经开始按 task 保存消息摘要和 runtime 引用。
+- `task_brief/task_flow/claim/todo` 是当前主读和默认写入模型。
+- 旧 `intent/plan/belief/commitment` 表默认不再写入，只作为历史 fallback。
+- `task_conversation_refs` 已经按 task 保存消息摘要和 runtime 引用。
+- evidence / execution 已带 `task_id`，用于 task-local 查询隔离。
 
 ## 8. Conversation Refs 边界
 
@@ -202,7 +205,7 @@ runtime 私有日志
 | `manager_view` | 管理界面 / 用户管理视角 | task brief、task flow、active task、风险、通知、dispatch、conversation refs |
 | `observer_view` | Observer / Talker / 外部 UI | 可转述摘要、安全事实、未确认点、待办、阻塞原因、允许/禁止动作、conversation refs |
 | `talker_view` | Chat Talker | 面向聊天表达的安全进度 |
-| `thinker_view` | Thinker | task brief、plan/task flow、claims、evidence、executions、dispatch、cancellation token |
+| `thinker_view` | Thinker | task brief、task flow、claims、evidence、executions、dispatch、cancellation token |
 | `sync_view` | 外部协作系统 | 最小同步摘要 |
 | `debug_view` | 开发和审计 | 事件、派生状态、内部详情 |
 
@@ -259,6 +262,11 @@ ack / resolve
 | observer/talker notification API | 已完成第一版 |
 | NotificationCoordinator | 已完成第一版 |
 | task conversation refs | 已完成第一版 |
+| 新状态表主读和默认写入 | 已完成 |
+| 默认不写旧状态表 | 已完成，integration 和真实 smoke 通过 |
+| 测试分层 fast / core / integration / full | 已完成 |
+| 真实 Router smoke | 已通过 |
+| 真实 Hermes interrupt smoke | 已通过 |
 
 ## 12. 当前工作区状态
 
@@ -274,6 +282,10 @@ ack / resolve
 | Observer / Talker notification SSE | 已完成第一版 |
 | Notification policy 去重 / 节流 / 优先级 | 已完成第一版 |
 | StateSourceAudit 主从切换审查 | 已完成第一版 |
+| legacy_debug 收窄到 manager/debug | 已完成 |
+| 默认不写旧状态表 | 已完成 |
+| 测试分层 | 已完成 |
+| 默认不写旧表下的 integration / real smoke | 已通过 |
 
 这些仍然是渐进式实现，不代表 Runtime 生态已经全部接完。
 
@@ -285,10 +297,36 @@ ack / resolve
 | Runtime Event Adapter 深度接入 Hermes | 通用 Adapter 已有，真实 Hermes 侧还可继续接入更多 runtime refs |
 | Observer notification WebSocket | SSE 第一版已完成，WebSocket 未做 |
 | Notification 高级优先级策略 | 第一版策略表已完成，复杂升级策略未做 |
-| Observer/Talker 最终回复回传 | conversation ref API 和 Hermes 回传已完成第一版 |
-| 状态表主从切换 | 新表已主读/优先写，旧表暂作兼容输出 |
+| 旧表写入代码 | 默认已不写旧表，但 opt-in 双写代码仍保留 |
+| 旧表读取 fallback | 仍保留，用于历史 DB 兼容 |
+| 旧表物理删除 | 未做，需要最后评估 |
 
-## 14. 不建议立刻做的事
+## 14. 当前完成度与剩余风险
+
+粗略完成度：
+
+| 模块 | 完成度 | 说明 |
+|---|---:|---|
+| KMS / Kernel / Thinker 分层 | 90% | 职责基本清晰 |
+| 打断与恢复 | 90% | integration 和真实 Hermes smoke 通过 |
+| Thinker dispatch 生命周期 | 85% | claim / heartbeat / complete / fail 已接通 |
+| Task Router 多任务路由 | 75% | 支持常见指代，LLM Router 已接入 |
+| Kernel 直接回答状态问题 | 80% | progress / evidence / failures / claims / todos 已支持 |
+| User Session 多任务管理 | 80% | user_sessions / global_tasks / conversation refs 已有 |
+| Observer / Manager / Notification | 65% | API / SSE / policy 第一版可用 |
+| 新状态表迁移 | 85% | 新表主读、默认写入、默认不写旧表 |
+| 旧表退场 | 70% | 写入默认停止，fallback 和物理删除未完成 |
+| 测试体系 | 80% | fast / core / integration / full 已分层 |
+
+当前没有发现完成不了的硬阻塞。剩余主要是收尾、加固和产品化。
+
+真正需要谨慎的风险：
+
+- LLM Router 无法保证 100% 不误判，需要保留低置信度澄清和回归样例。
+- 旧表读取 fallback 不能贸然删除，真实历史 DB 可能仍有未迁移数据。
+- Observer/Talker 产品层还需要根据真实 UI/协议继续打磨。
+
+## 15. 不建议立刻做的事
 
 暂时不建议：
 
