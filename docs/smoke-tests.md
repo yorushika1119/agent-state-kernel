@@ -96,6 +96,7 @@ THINKER_DISPATCHES:
   second dispatch status=completed
 TASK_CONVERSATION_REFS:
   assistant source=gateway_streamed_reply message_ref_id=...
+  # proxy mode 时 source 可能是 gateway_proxy_streamed_reply
 ACTIVE_RUN_AFTER_DONE: empty
 ```
 
@@ -105,6 +106,32 @@ ACTIVE_RUN_AFTER_DONE: empty
 - 新请求获得新的 thinker dispatch。
 - 旧 dispatch 不再成为最终回复。
 - 最终回复的外部 `message_id` 会回传到 Kernel 的 task conversation refs。
+
+## 4. Hermes proxy mode dispatch check
+
+用途：验证 Gateway 开启 proxy mode 时，远端 thinker 的结果仍按 KMS dispatch 生命周期回写。
+
+当前自动化覆盖：
+
+```powershell
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python -m pytest -o addopts='' tests\gateway\test_proxy_mode.py -q
+```
+
+预期关键行为：
+
+```text
+proxy claim dispatch
+proxy streamed reply -> already_sent=True
+conversation ref source=gateway_proxy_streamed_reply
+stale proxy generation -> interrupted=True
+```
+
+含义：
+
+- proxy mode 不绕过 KMS dispatch。
+- proxy 流式回复已交付时不会重复发送最终消息。
+- 旧 proxy run 被打断后不会误标成成功完成。
 
 ## 运行策略
 
