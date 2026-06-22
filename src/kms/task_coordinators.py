@@ -263,3 +263,49 @@ class TaskSwitchCoordinator:
             session,
             run_id=run_id,
         )
+
+    async def refresh_active_task_from_kernel_state(
+        self,
+        session,
+        *,
+        run_id: str,
+        user_session_id: str = "",
+        agent_id: str = "",
+        task_brief_version: int = 0,
+    ) -> Optional[TaskSnapshot]:
+        active_task = await self.ensure_active_task_for_session(
+            session,
+            run_id=run_id,
+        )
+        if active_task is None:
+            return None
+
+        intent = await self.store.get_intent(session.kernel_session_id)
+        plan = await self.store.get_plan(session.kernel_session_id)
+        progress = await self.store.get_progress(session.kernel_session_id)
+
+        active_task.goal = intent.goal if intent else active_task.goal
+        active_task.constraints = intent.constraints if intent else active_task.constraints
+        active_task.plan_id = plan.plan_id if plan else active_task.plan_id
+        active_task.current_step = plan.current_step if plan else active_task.current_step
+        active_task.current_step_name = ""
+        if plan and plan.current_step:
+            current = next(
+                (step for step in plan.steps if step.step_id == plan.current_step),
+                None,
+            )
+            if current:
+                active_task.current_step_name = current.name
+            active_task.steps = [step.model_dump() for step in plan.steps]
+        active_task.last_run_id = run_id
+        if progress and progress.summary:
+            active_task.resume_summary = progress.summary
+
+        await self.store.save_task(active_task)
+        await self.sync_global_task(
+            active_task,
+            user_session_id=user_session_id,
+            agent_id=agent_id,
+            task_brief_version=task_brief_version,
+        )
+        return active_task

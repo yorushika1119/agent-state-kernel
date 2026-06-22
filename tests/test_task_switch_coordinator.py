@@ -13,7 +13,14 @@ from src.kms.task_coordinators import (
     ResumeCoordinator,
     TaskSwitchCoordinator,
 )
-from src.schema.state import TaskStatus
+from src.schema.state import (
+    IntentState,
+    PlanState,
+    PlanStep,
+    ProgressState,
+    StepStatus,
+    TaskStatus,
+)
 from src.stores.sqlite_store import SqliteStore
 
 
@@ -122,5 +129,93 @@ async def test_activate_existing_task_restores_session_and_marks_global_active()
         assert user_session_after.active_task_id == task.task_id
         assert resume_context["task_id"] == task.task_id
         assert resume_context["resume_summary"] == "已经完成前置分析。"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_refresh_active_task_from_kernel_state_syncs_task_snapshot():
+    store, engine, coordinator = await build_runtime()
+    try:
+        session = await engine.create_session(
+            agent_id="agent-refresh",
+            runtime_session_id="rt-refresh",
+        )
+        user_session = await store.observe_user_session(
+            user_session_id="user-refresh",
+            runtime_session_id="rt-refresh",
+            agent_id="agent-refresh",
+        )
+        task = await store.create_task(
+            session.kernel_session_id,
+            title="旧标题",
+            goal="旧目标",
+            last_run_id="run_old",
+        )
+        await store.update_session_status(
+            session.kernel_session_id,
+            "running",
+            active_run_id="run_refresh",
+            active_task_id=task.task_id,
+        )
+        await store.save_intent(
+            session.kernel_session_id,
+            IntentState(
+                intent_version=2,
+                goal="新目标：整理 active task 刷新",
+                constraints=["保持兼容"],
+            ),
+        )
+        await store.save_plan(
+            session.kernel_session_id,
+            PlanState(
+                plan_id="plan_refresh",
+                current_step="step_2",
+                steps=[
+                    PlanStep(
+                        step_id="step_1",
+                        name="分析",
+                        status=StepStatus.COMPLETED,
+                    ),
+                    PlanStep(
+                        step_id="step_2",
+                        name="实现",
+                        status=StepStatus.RUNNING,
+                    ),
+                ],
+                intent_version=2,
+            ),
+        )
+        await store.save_progress(
+            session.kernel_session_id,
+            ProgressState(
+                session_id=session.kernel_session_id,
+                status="running",
+                summary="已经完成分析，正在实现。",
+            ),
+        )
+        refreshed = await store.get_session(session.kernel_session_id)
+
+        active_task = await coordinator.refresh_active_task_from_kernel_state(
+            refreshed,
+            run_id="run_refresh",
+            user_session_id=user_session.user_session_id,
+            agent_id="agent-refresh",
+            task_brief_version=2,
+        )
+
+        stored = await store.get_task(session.kernel_session_id, task.task_id)
+        global_task = await store.get_global_task(task.task_id)
+
+        assert active_task.task_id == task.task_id
+        assert stored.goal == "新目标：整理 active task 刷新"
+        assert stored.constraints == ["保持兼容"]
+        assert stored.plan_id == "plan_refresh"
+        assert stored.current_step == "step_2"
+        assert stored.current_step_name == "实现"
+        assert stored.resume_summary == "已经完成分析，正在实现。"
+        assert stored.last_run_id == "run_refresh"
+        assert global_task.status == TaskStatus.ACTIVE
+        assert global_task.task_brief_version == 2
     finally:
         await store.close()

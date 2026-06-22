@@ -19,7 +19,6 @@ from src.kms.task_coordinators import (
     TaskSwitchCoordinator,
 )
 from src.kms.task_routing_coordinator import TaskRoutingCoordinator
-from src.schema.state import TaskSnapshot
 
 
 @dataclass
@@ -84,17 +83,6 @@ class KmsManager:
             sessions = await self.store.list_sessions_by_runtime_session(runtime_session_id, limit=1)
             session = sessions[0] if sessions else None
         return session
-
-    async def _ensure_active_task_for_session(
-        self,
-        session,
-        *,
-        run_id: str,
-    ) -> Optional[TaskSnapshot]:
-        return await self.task_switches.ensure_active_task_for_session(
-            session,
-            run_id=run_id,
-        )
 
     async def dispatch_user_message(
         self,
@@ -382,31 +370,13 @@ class KmsManager:
         refreshed = await self.store.get_session(session.kernel_session_id)
 
         if task_action == "continue_active_task":
-            active_task = await self._ensure_active_task_for_session(refreshed, run_id=run_id)
-            if active_task:
-                intent = await self.store.get_intent(session.kernel_session_id)
-                plan = await self.store.get_plan(session.kernel_session_id)
-                progress = await self.store.get_progress(session.kernel_session_id)
-                active_task.goal = intent.goal if intent else active_task.goal
-                active_task.constraints = intent.constraints if intent else active_task.constraints
-                active_task.plan_id = plan.plan_id if plan else active_task.plan_id
-                active_task.current_step = plan.current_step if plan else active_task.current_step
-                active_task.current_step_name = ""
-                if plan and plan.current_step:
-                    current = next((step for step in plan.steps if step.step_id == plan.current_step), None)
-                    if current:
-                        active_task.current_step_name = current.name
-                    active_task.steps = [step.model_dump() for step in plan.steps]
-                active_task.last_run_id = run_id
-                if progress and progress.summary:
-                    active_task.resume_summary = progress.summary
-                await self.store.save_task(active_task)
-                await self.task_switches.sync_global_task(
-                    active_task,
-                    user_session_id=user_session.user_session_id,
-                    agent_id=agent_id,
-                    task_brief_version=refreshed.intent_version if refreshed else session.intent_version,
-                )
+            active_task = await self.task_switches.refresh_active_task_from_kernel_state(
+                refreshed,
+                run_id=run_id,
+                user_session_id=user_session.user_session_id,
+                agent_id=agent_id,
+                task_brief_version=refreshed.intent_version if refreshed else session.intent_version,
+            )
         elif should_submit_message:
             active_task = await self.lifecycle.create_task_from_user_message(
                 session.kernel_session_id,
