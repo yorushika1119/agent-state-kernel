@@ -978,6 +978,21 @@ class SqliteStore:
     # ── 意图 ──
     async def get_intent(self, session_id: str) -> Optional[IntentState]:
         """获取当前意图状态。"""
+        rows = await self.conn.execute_fetchall(
+            "SELECT * FROM task_brief_states WHERE kernel_session_id = ?",
+            (session_id,),
+        )
+        if rows:
+            r = rows[0]
+            return IntentState(
+                intent_version=r["task_brief_version"] or 0,
+                goal=r["goal"] or "",
+                constraints=json.loads(r["constraints"] or "[]"),
+                output_format=r["output_format"] or "",
+                priority=r["priority"] or "normal",
+                cancelled=bool(r["cancelled"]),
+                last_user_update_at=utc_from_iso(r["updated_at"]),
+            )
         row = await self.conn.execute_fetchall(
             "SELECT * FROM intent_states WHERE kernel_session_id = ?",
             (session_id,),
@@ -997,6 +1012,19 @@ class SqliteStore:
 
     async def save_intent(self, session_id: str, intent: IntentState):
         """保存意图状态——使用 REPLACE（upsert）。"""
+        session = await self.get_session(session_id)
+        await self.save_task_brief(
+            TaskBriefState(
+                kernel_session_id=session_id,
+                task_id=session.active_task_id if session else "",
+                task_brief_version=intent.intent_version,
+                goal=intent.goal,
+                output_format=intent.output_format,
+                constraints=intent.constraints,
+                priority=intent.priority,
+                cancelled=intent.cancelled,
+            )
+        )
         await self.conn.execute(
             """INSERT OR REPLACE INTO intent_states
                (kernel_session_id, intent_version, goal, constraints,
@@ -1015,23 +1043,26 @@ class SqliteStore:
             ),
         )
         await self.conn.commit()  # ← 必须 commit！常见遗漏坑
-        session = await self.get_session(session_id)
-        await self.save_task_brief(
-            TaskBriefState(
-                kernel_session_id=session_id,
-                task_id=session.active_task_id if session else "",
-                task_brief_version=intent.intent_version,
-                goal=intent.goal,
-                output_format=intent.output_format,
-                constraints=intent.constraints,
-                priority=intent.priority,
-                cancelled=intent.cancelled,
-            )
-        )
 
     # ── 计划 ──
     async def get_plan(self, session_id: str) -> Optional[PlanState]:
         """获取当前计划状态。"""
+        rows = await self.conn.execute_fetchall(
+            "SELECT * FROM task_flows WHERE kernel_session_id = ?",
+            (session_id,),
+        )
+        if rows:
+            r = rows[0]
+            from src.schema.state import PlanStep
+            steps_data = json.loads(r["steps"] or "[]")
+            steps = [PlanStep(**s) for s in steps_data]
+            return PlanState(
+                plan_id=r["flow_id"] or "",
+                status=PlanStatus(r["status"] or PlanStatus.ACTIVE.value),
+                steps=steps,
+                current_step=r["current_step"] or "",
+                intent_version=r["task_brief_version"] or 0,
+            )
         row = await self.conn.execute_fetchall(
             "SELECT * FROM plan_states WHERE kernel_session_id = ?",
             (session_id,),
@@ -1052,6 +1083,19 @@ class SqliteStore:
 
     async def save_plan(self, session_id: str, plan: PlanState):
         """保存计划状态。"""
+        session = await self.get_session(session_id)
+        await self.save_task_flow(
+            TaskFlowState(
+                kernel_session_id=session_id,
+                flow_id=plan.plan_id,
+                task_id=session.active_task_id if session else "",
+                status=plan.status,
+                current_step=plan.current_step,
+                steps=[step.model_dump() for step in plan.steps],
+                task_brief_version=plan.intent_version,
+                execution_summary=await self._build_execution_summary(session_id),
+            )
+        )
         await self.conn.execute(
             """INSERT OR REPLACE INTO plan_states
                (kernel_session_id, plan_id, status, current_step, steps,
@@ -1068,19 +1112,6 @@ class SqliteStore:
             ),
         )
         await self.conn.commit()
-        session = await self.get_session(session_id)
-        await self.save_task_flow(
-            TaskFlowState(
-                kernel_session_id=session_id,
-                flow_id=plan.plan_id,
-                task_id=session.active_task_id if session else "",
-                status=plan.status,
-                current_step=plan.current_step,
-                steps=[step.model_dump() for step in plan.steps],
-                task_brief_version=plan.intent_version,
-                execution_summary=await self._build_execution_summary(session_id),
-            )
-        )
 
     # ── 新版状态兼容层 ──
     async def get_task_brief(self, session_id: str) -> Optional[TaskBriefState]:
@@ -1089,7 +1120,21 @@ class SqliteStore:
             (session_id,),
         )
         if not rows:
-            return None
+            intent = await self.get_intent(session_id)
+            if not intent:
+                return None
+            session = await self.get_session(session_id)
+            return TaskBriefState(
+                kernel_session_id=session_id,
+                task_id=session.active_task_id if session else "",
+                task_brief_version=intent.intent_version,
+                goal=intent.goal,
+                output_format=intent.output_format,
+                constraints=intent.constraints,
+                priority=intent.priority,
+                cancelled=intent.cancelled,
+                updated_at=intent.last_user_update_at or utc_now(),
+            )
         row = rows[0]
         return TaskBriefState(
             kernel_session_id=row["kernel_session_id"],
@@ -1129,7 +1174,20 @@ class SqliteStore:
             (session_id,),
         )
         if not rows:
-            return None
+            plan = await self.get_plan(session_id)
+            if not plan:
+                return None
+            session = await self.get_session(session_id)
+            return TaskFlowState(
+                kernel_session_id=session_id,
+                flow_id=plan.plan_id,
+                task_id=session.active_task_id if session else "",
+                status=plan.status,
+                current_step=plan.current_step,
+                steps=[step.model_dump() for step in plan.steps],
+                task_brief_version=plan.intent_version,
+                execution_summary=await self._build_execution_summary(session_id),
+            )
         row = rows[0]
         return TaskFlowState(
             kernel_session_id=row["kernel_session_id"],
@@ -1850,45 +1908,98 @@ class SqliteStore:
             "SELECT * FROM claim_items WHERE kernel_session_id = ?",
             (session_id,),
         )
+        if rows:
+            return [
+                ClaimItem(
+                    claim_id=r["claim_id"],
+                    kernel_session_id=r["kernel_session_id"],
+                    task_id=r["task_id"] or "",
+                    claim=r["claim"] or "",
+                    status=BeliefStatus(r["status"] or BeliefStatus.UNVERIFIED.value),
+                    confidence=r["confidence"] or 0.0,
+                    supporting_evidence=json.loads(r["supporting_evidence"] or "[]"),
+                    conflicting_evidence=json.loads(r["conflicting_evidence"] or "[]"),
+                    visibility=r["visibility"] or "shared",
+                    last_verified_at=utc_from_iso(r["last_verified_at"]),
+                    updated_at=utc_from_iso(r["updated_at"]) if r["updated_at"] else utc_now(),
+                )
+                for r in rows
+            ]
+        beliefs = await self.get_beliefs(session_id)
+        session = await self.get_session(session_id)
         return [
             ClaimItem(
-                claim_id=r["claim_id"],
-                kernel_session_id=r["kernel_session_id"],
-                task_id=r["task_id"] or "",
-                claim=r["claim"] or "",
-                status=BeliefStatus(r["status"] or BeliefStatus.UNVERIFIED.value),
-                confidence=r["confidence"] or 0.0,
-                supporting_evidence=json.loads(r["supporting_evidence"] or "[]"),
-                conflicting_evidence=json.loads(r["conflicting_evidence"] or "[]"),
-                visibility=r["visibility"] or "shared",
-                last_verified_at=utc_from_iso(r["last_verified_at"]),
-                updated_at=utc_from_iso(r["updated_at"]) if r["updated_at"] else utc_now(),
+                claim_id=belief.belief_id,
+                kernel_session_id=session_id,
+                task_id=session.active_task_id if session else "",
+                claim=belief.claim,
+                status=belief.status,
+                confidence=belief.confidence,
+                supporting_evidence=belief.supporting_evidence,
+                conflicting_evidence=belief.conflicting_evidence,
+                visibility=belief.visibility,
+                last_verified_at=belief.last_verified_at,
             )
-            for r in rows
+            for belief in beliefs
         ]
 
     async def get_beliefs(self, session_id: str) -> List[BeliefItem]:
         """获取所有信念条目。"""
+        claim_rows = await self.conn.execute_fetchall(
+            "SELECT * FROM claim_items WHERE kernel_session_id = ?",
+            (session_id,),
+        )
+        if claim_rows:
+            return [
+                BeliefItem(
+                    belief_id=r["claim_id"],
+                    claim=r["claim"] or "",
+                    status=BeliefStatus(r["status"] or BeliefStatus.UNVERIFIED.value),
+                    confidence=r["confidence"] or 0.0,
+                    supporting_evidence=json.loads(r["supporting_evidence"] or "[]"),
+                    conflicting_evidence=json.loads(r["conflicting_evidence"] or "[]"),
+                    visibility=r["visibility"] or "shared",
+                    last_verified_at=utc_from_iso(r["last_verified_at"]),
+                )
+                for r in claim_rows
+            ]
         rows = await self.conn.execute_fetchall(
             "SELECT * FROM belief_items WHERE kernel_session_id = ?",
             (session_id,),
         )
-        return [
-            BeliefItem(
-                belief_id=r["belief_id"],
-                claim=r["claim"] or "",
-                status=BeliefStatus(r["status"]),
-                confidence=r["confidence"] or 0.0,
-                supporting_evidence=json.loads(r["supporting_evidence"] or "[]"),
-                conflicting_evidence=json.loads(r["conflicting_evidence"] or "[]"),
-                visibility=r["visibility"] or "shared",
-                last_verified_at=utc_from_iso(r["last_verified_at"]),
-            )
-            for r in rows
-        ]
+        if rows:
+            return [
+                BeliefItem(
+                    belief_id=r["belief_id"],
+                    claim=r["claim"] or "",
+                    status=BeliefStatus(r["status"]),
+                    confidence=r["confidence"] or 0.0,
+                    supporting_evidence=json.loads(r["supporting_evidence"] or "[]"),
+                    conflicting_evidence=json.loads(r["conflicting_evidence"] or "[]"),
+                    visibility=r["visibility"] or "shared",
+                    last_verified_at=utc_from_iso(r["last_verified_at"]),
+                )
+                for r in rows
+            ]
+        return []
 
     async def save_belief(self, session_id: str, belief: BeliefItem):
         """保存单条信念——使用 REPLACE（upsert）。"""
+        session = await self.get_session(session_id)
+        await self.save_claim_item(
+            ClaimItem(
+                claim_id=belief.belief_id,
+                kernel_session_id=session_id,
+                task_id=session.active_task_id if session else "",
+                claim=belief.claim,
+                status=belief.status,
+                confidence=belief.confidence,
+                supporting_evidence=belief.supporting_evidence,
+                conflicting_evidence=belief.conflicting_evidence,
+                visibility=belief.visibility,
+                last_verified_at=belief.last_verified_at,
+            )
+        )
         await self.conn.execute(
             """INSERT OR REPLACE INTO belief_items
                (belief_id, kernel_session_id, claim, status, confidence,
@@ -1909,21 +2020,6 @@ class SqliteStore:
             ),
         )
         await self.conn.commit()
-        session = await self.get_session(session_id)
-        await self.save_claim_item(
-            ClaimItem(
-                claim_id=belief.belief_id,
-                kernel_session_id=session_id,
-                task_id=session.active_task_id if session else "",
-                claim=belief.claim,
-                status=belief.status,
-                confidence=belief.confidence,
-                supporting_evidence=belief.supporting_evidence,
-                conflicting_evidence=belief.conflicting_evidence,
-                visibility=belief.visibility,
-                last_verified_at=belief.last_verified_at,
-            )
-        )
 
     async def save_claim_item(self, claim: ClaimItem) -> None:
         await self.conn.execute(
@@ -2011,43 +2107,93 @@ class SqliteStore:
             "SELECT * FROM todo_obligations WHERE kernel_session_id = ?",
             (session_id,),
         )
+        if rows:
+            return [
+                TodoObligation(
+                    obligation_id=r["obligation_id"],
+                    kernel_session_id=r["kernel_session_id"],
+                    task_id=r["task_id"] or "",
+                    statement=r["statement"] or "",
+                    created_by=r["created_by"] or "talker",
+                    status=CommitmentStatus(r["status"] or CommitmentStatus.PENDING.value),
+                    requires_confirmation=bool(r["requires_confirmation"]),
+                    related_task_brief_version=r["related_task_brief_version"] or 0,
+                    resolved_at=utc_from_iso(r["resolved_at"]),
+                    updated_at=utc_from_iso(r["updated_at"]) if r["updated_at"] else utc_now(),
+                )
+                for r in rows
+            ]
+        commitments = await self.get_commitments(session_id)
+        session = await self.get_session(session_id)
         return [
             TodoObligation(
-                obligation_id=r["obligation_id"],
-                kernel_session_id=r["kernel_session_id"],
-                task_id=r["task_id"] or "",
-                statement=r["statement"] or "",
-                created_by=r["created_by"] or "talker",
-                status=CommitmentStatus(r["status"] or CommitmentStatus.PENDING.value),
-                requires_confirmation=bool(r["requires_confirmation"]),
-                related_task_brief_version=r["related_task_brief_version"] or 0,
-                resolved_at=utc_from_iso(r["resolved_at"]),
-                updated_at=utc_from_iso(r["updated_at"]) if r["updated_at"] else utc_now(),
+                obligation_id=commitment.commitment_id,
+                kernel_session_id=session_id,
+                task_id=session.active_task_id if session else "",
+                statement=commitment.statement,
+                created_by=commitment.created_by,
+                status=commitment.status,
+                requires_confirmation=commitment.requires_confirmation,
+                related_task_brief_version=commitment.related_intent_version,
+                resolved_at=commitment.resolved_at,
             )
-            for r in rows
+            for commitment in commitments
         ]
 
     async def get_commitments(self, session_id: str) -> List[Commitment]:
         """获取所有 Talker 承诺。"""
+        todo_rows = await self.conn.execute_fetchall(
+            "SELECT * FROM todo_obligations WHERE kernel_session_id = ?",
+            (session_id,),
+        )
+        if todo_rows:
+            return [
+                Commitment(
+                    commitment_id=r["obligation_id"],
+                    statement=r["statement"] or "",
+                    created_by=r["created_by"] or "talker",
+                    status=CommitmentStatus(r["status"] or CommitmentStatus.PENDING.value),
+                    requires_confirmation=bool(r["requires_confirmation"]),
+                    related_intent_version=r["related_task_brief_version"] or 0,
+                    resolved_at=utc_from_iso(r["resolved_at"]),
+                )
+                for r in todo_rows
+            ]
         rows = await self.conn.execute_fetchall(
             "SELECT * FROM commitments WHERE kernel_session_id = ?",
             (session_id,),
         )
-        return [
-            Commitment(
-                commitment_id=r["commitment_id"],
-                statement=r["statement"] or "",
-                created_by=r["created_by"] or "talker",
-                status=CommitmentStatus(r["status"]),
-                requires_confirmation=bool(r["requires_confirmation"]),
-                related_intent_version=r["related_intent_version"] or 0,
-                resolved_at=utc_from_iso(r["resolved_at"]),
-            )
-            for r in rows
-        ]
+        if rows:
+            return [
+                Commitment(
+                    commitment_id=r["commitment_id"],
+                    statement=r["statement"] or "",
+                    created_by=r["created_by"] or "talker",
+                    status=CommitmentStatus(r["status"]),
+                    requires_confirmation=bool(r["requires_confirmation"]),
+                    related_intent_version=r["related_intent_version"] or 0,
+                    resolved_at=utc_from_iso(r["resolved_at"]),
+                )
+                for r in rows
+            ]
+        return []
 
     async def save_commitment(self, session_id: str, commitment: Commitment):
         """保存单条承诺——使用 REPLACE（upsert）。"""
+        session = await self.get_session(session_id)
+        await self.save_todo_obligation(
+            TodoObligation(
+                obligation_id=commitment.commitment_id,
+                kernel_session_id=session_id,
+                task_id=session.active_task_id if session else "",
+                statement=commitment.statement,
+                created_by=commitment.created_by,
+                status=commitment.status,
+                requires_confirmation=commitment.requires_confirmation,
+                related_task_brief_version=commitment.related_intent_version,
+                resolved_at=commitment.resolved_at,
+            )
+        )
         await self.conn.execute(
             """INSERT OR REPLACE INTO commitments
                (commitment_id, kernel_session_id, statement, created_by,
@@ -2067,20 +2213,6 @@ class SqliteStore:
             ),
         )
         await self.conn.commit()
-        session = await self.get_session(session_id)
-        await self.save_todo_obligation(
-            TodoObligation(
-                obligation_id=commitment.commitment_id,
-                kernel_session_id=session_id,
-                task_id=session.active_task_id if session else "",
-                statement=commitment.statement,
-                created_by=commitment.created_by,
-                status=commitment.status,
-                requires_confirmation=commitment.requires_confirmation,
-                related_task_brief_version=commitment.related_intent_version,
-                resolved_at=commitment.resolved_at,
-            )
-        )
 
     async def save_todo_obligation(self, obligation: TodoObligation) -> None:
         await self.conn.execute(

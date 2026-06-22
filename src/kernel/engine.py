@@ -39,7 +39,7 @@ class KernelEngine:
             source_component="kernel_manager",
             payload=payload or {},
             visibility=visibility,
-            intent_version=session.intent_version if session else 0,
+            intent_version=0,
         )
         await _assign_event_metadata(self.store, session_id, event)
         await self.store.append_event(event)
@@ -153,26 +153,26 @@ class KernelEngine:
     def _is_thinker_visible(self, visibility: str) -> bool:
         return visibility != "private"
 
-    def _build_risks(self, beliefs, executions, commitments) -> list[str]:
+    def _build_risks(self, claims, executions, todos) -> list[str]:
         risks: list[str] = []
 
-        for belief in beliefs:
-            if not self._is_thinker_visible(belief.visibility):
+        for claim in claims:
+            if not self._is_thinker_visible(claim.visibility):
                 continue
-            if belief.status.value == "conflicting":
-                risks.append(f"belief_conflict:{belief.claim}")
-            elif belief.status.value == "unverified":
-                risks.append(f"unverified:{belief.claim}")
-            elif belief.status.value == "likely" and belief.confidence < 0.5:
-                risks.append(f"low_confidence:{belief.claim}")
+            if claim.status.value == "conflicting":
+                risks.append(f"claim_conflict:{claim.claim}")
+            elif claim.status.value == "unverified":
+                risks.append(f"unverified:{claim.claim}")
+            elif claim.status.value == "likely" and claim.confidence < 0.5:
+                risks.append(f"low_confidence:{claim.claim}")
 
         for action in executions:
             if action.status == "failed":
                 risks.append(f"tool_failed:{action.tool or action.action_id}")
 
-        for commitment in commitments:
-            if commitment.requires_confirmation and commitment.status.value == "pending":
-                risks.append(f"awaiting_confirmation:{commitment.statement}")
+        for todo in todos:
+            if todo.requires_confirmation and todo.status.value == "pending":
+                risks.append(f"awaiting_confirmation:{todo.statement}")
 
         seen = set()
         ordered: list[str] = []
@@ -220,13 +220,13 @@ class KernelEngine:
         updates.sort(key=lambda item: item["at"] or "", reverse=True)
         return updates[:8]
 
-    def _build_blocking_reason(self, intent, progress, executions, commitments, session) -> Optional[str]:
+    def _build_blocking_reason(self, task_brief, progress, executions, todos, session) -> Optional[str]:
         pending_confirmation = next(
             (
-                commitment.statement
-                for commitment in commitments
-                if commitment.requires_confirmation
-                and commitment.status.value == "pending"
+                todo.statement
+                for todo in todos
+                if todo.requires_confirmation
+                and todo.status.value == "pending"
             ),
             "",
         )
@@ -234,7 +234,7 @@ class KernelEngine:
             (action.tool or action.action_id for action in executions if action.status == "failed"),
             "",
         )
-        if intent and intent.cancelled:
+        if task_brief and task_brief.cancelled:
             return "session_cancelled"
         if pending_confirmation:
             return "awaiting_user_confirmation"
@@ -327,9 +327,9 @@ class KernelEngine:
                 "forbidden_actions": progress.forbidden_actions if progress else [],
             },
             "cancellation": {
-                "cancelled": bool(intent.cancelled) if intent else False,
+                "cancelled": bool(task_brief.cancelled) if task_brief else False,
                 "session_status": session.status.value if session else "unknown",
-                "intent_version": intent.intent_version if intent else 0,
+                "intent_version": task_brief.task_brief_version if task_brief else 0,
                 "active_run_id": session.active_run_id if session else "",
                 "active_task_id": session.active_task_id if session else "",
                 "last_paused_task_id": session.last_paused_task_id if session else "",
@@ -416,7 +416,7 @@ class KernelEngine:
                 for ref in runtime_references
                 if self._is_thinker_visible(ref.visibility)
             ],
-            "risks": self._build_risks(beliefs, executions, commitments),
+            "risks": self._build_risks(claims, executions, todos),
         }
 
     async def get_observer_view(self, session_id: str) -> Optional[Dict[str, Any]]:
@@ -430,7 +430,7 @@ class KernelEngine:
             session_id,
             session.active_task_id or "",
         )
-        commitments = state["commitments"]
+        task_brief = state["task_brief"]
         todos = state["todos"]
         executions = state["executions"]
         notifications = await self.store.list_observer_notifications(
@@ -444,18 +444,17 @@ class KernelEngine:
             limit=8,
         )
         dispatches = state["thinker_dispatches"]
-        intent = state["intent"]
 
         pending_confirmations = [
-            commitment.statement
-            for commitment in commitments
-            if commitment.requires_confirmation and commitment.status.value == "pending"
+            todo.statement
+            for todo in todos
+            if todo.requires_confirmation and todo.status.value == "pending"
         ]
         blocking_reason = self._build_blocking_reason(
-            intent,
+            task_brief,
             progress,
             executions,
-            commitments,
+            todos,
             session,
         )
         open_todos = [
@@ -513,12 +512,10 @@ class KernelEngine:
         task_brief = state["task_brief"]
         task_flow = state["task_flow"]
         tasks = state["tasks"]
-        beliefs = state["beliefs"]
+        claims = state["claims"]
         executions = state["executions"]
-        commitments = state["commitments"]
         todos = state["todos"]
         dispatches = state["thinker_dispatches"]
-        intent = state["intent"]
         active_task = await self.store.get_task(
             session_id,
             session.active_task_id or "",
@@ -534,15 +531,15 @@ class KernelEngine:
             limit=12,
         )
         pending_confirmations = [
-            commitment.statement
-            for commitment in commitments
-            if commitment.requires_confirmation and commitment.status.value == "pending"
+            todo.statement
+            for todo in todos
+            if todo.requires_confirmation and todo.status.value == "pending"
         ]
         blocking_reason = self._build_blocking_reason(
-            intent,
+            task_brief,
             progress,
             executions,
-            commitments,
+            todos,
             session,
         )
         summary = progress.summary if progress else ""
@@ -581,7 +578,7 @@ class KernelEngine:
                 for todo in todos
                 if todo.status.value == "pending"
             ],
-            "risks": self._build_risks(beliefs, executions, commitments),
+            "risks": self._build_risks(claims, executions, todos),
             "notifications": [notification.model_dump() for notification in notifications],
             "thinker_dispatches": [dispatch.model_dump() for dispatch in dispatches],
             "allowed_actions": progress.allowed_actions if progress else [],

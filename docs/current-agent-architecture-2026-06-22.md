@@ -87,14 +87,14 @@ flowchart TD
 | `task_context_routes` | 每次用户消息的路由审计 |
 | `session_links` | kernel session 和 runtime session 的映射 |
 | `task_snapshots` | task 当前快照 |
-| `intent_states` | 旧架构意图状态，目前仍是事实来源之一 |
-| `plan_states` | 旧架构计划状态，目前仍是事实来源之一 |
-| `belief_items` | 旧架构 belief 状态，目前仍保留 |
-| `commitments` | 旧架构 commitment 状态，目前仍保留 |
-| `task_brief_states` | 新命名兼容层 |
-| `task_flows` | 新命名兼容层 |
-| `claim_items` | 新命名兼容层 |
-| `todo_obligations` | 新命名兼容层 |
+| `task_brief_states` | task-first 意图/任务概要主读模型 |
+| `task_flows` | task-first 计划/流程主读模型 |
+| `claim_items` | task-first claim 主读模型 |
+| `todo_obligations` | task-first todo 主读模型 |
+| `intent_states` | 旧架构意图状态，当前作为兼容输出 |
+| `plan_states` | 旧架构计划状态，当前作为兼容输出 |
+| `belief_items` | 旧架构 belief 状态，当前作为兼容输出 |
+| `commitments` | 旧架构 commitment 状态，当前作为兼容输出 |
 | `thinker_dispatches` | KMS 下发给 Thinker 的任务单 |
 | `observer_notifications` | 通知 Observer / Talker 主动刷新或汇报 |
 | `task_conversation_refs` | task 级消息摘要和 runtime message 引用，不保存完整 transcript |
@@ -102,9 +102,10 @@ flowchart TD
 
 当前状态源结论：
 
-- `intent_states / plan_states / belief_items / commitments` 仍是事实来源。
-- `task_brief_states / task_flows / claim_items / todo_obligations` 是 task-first 兼容影子层。
-- `GET /kms/state-source-audit` 可查看当前为什么不能整体切换主表。
+- `task_brief_states / task_flows / claim_items / todo_obligations` 已经切为主读模型。
+- `save_intent / save_plan / save_belief / save_commitment` 现在先写新版表，再写旧表兼容输出。
+- `intent_states / plan_states / belief_items / commitments` 暂不删除，用于兼容旧接口和 debug 输出。
+- `GET /kms/state-source-audit` 可查看当前主读切换状态。
 
 ## 5. 用户消息主流程
 
@@ -285,7 +286,7 @@ ack / resolve
 | Observer notification WebSocket | SSE 第一版已完成，WebSocket 未做 |
 | Notification 高级优先级策略 | 第一版策略表已完成，复杂升级策略未做 |
 | Observer/Talker 最终回复回传 | conversation ref API 和 Hermes 回传已完成第一版 |
-| 状态表主从切换 | 已有审查接口，旧表仍是事实来源，不建议马上硬切 |
+| 状态表主从切换 | 新表已主读/优先写，旧表暂作兼容输出 |
 
 ## 14. 不建议立刻做的事
 
@@ -304,5 +305,5 @@ ack / resolve
 先补 task-local refs / views / coordinator
 再拆 KmsManager
 再完善通知推送
-最后再考虑状态事实来源迁移
+最后再逐步移除旧表兼容依赖
 ```

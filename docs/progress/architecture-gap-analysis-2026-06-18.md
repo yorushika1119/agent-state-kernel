@@ -1239,3 +1239,23 @@ pytest
 - 原因是 reducer、progress synthesize、direct responder、打断恢复链路仍依赖旧表作为事实来源。
 - 新表继续作为 task-first 兼容读模型。
 - 后续应逐表切换读取优先级，而不是一次性迁移。
+
+## 2026-06-22：task-first 状态表主读切换
+
+本阶段继续按设计文档推进状态模型迁移，不再停留在“影子表只读展示”。
+
+核心变化：
+- `task_brief_states / task_flows / claim_items / todo_obligations` 已切为主读模型。
+- `intent_states / plan_states / belief_items / commitments` 改为兼容输出和 debug 过渡层。
+- 新版 getter 优先读新版表，缺数据再回退旧表。
+- 旧版 getter 也反向优先由新版表合成，缺数据再回退旧表。
+- KMS dispatch、pause、resume、global task 同步优先使用 `task_brief_version`。
+- Pipeline 分配事件版本时优先使用 `task_brief_states.task_brief_version`。
+- manager / observer / thinker view 的风险、阻塞、取消判断优先使用 `claim_items / todo_obligations / task_brief`。
+- `save_intent / save_plan / save_belief / save_commitment` 调整为先写新版表，再写旧兼容表。
+- 新增 `tests/test_state_primary_read_switch.py`，验证新旧表内容冲突时以新版表为准。
+
+当前边界：
+- 旧表没有物理删除。
+- reducer 入口函数名仍保留旧命名，内部通过 store 写入新版主表和旧兼容表。
+- 下一步如果继续推进，应先冻结旧表直接读取依赖，再考虑删除或迁移历史数据。

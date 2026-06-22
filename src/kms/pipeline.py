@@ -610,7 +610,12 @@ async def _assign_event_metadata(
     """为即将入日志的事件分配唯一 ID、状态版本和 intent 版本。"""
     latest = await store.get_latest_state_version(session_id)
     session = await store.get_session(session_id)
-    current_intent_version = session.intent_version if session else 0
+    task_brief = await store.get_task_brief(session_id)
+    current_intent_version = (
+        task_brief.task_brief_version
+        if task_brief and task_brief.task_brief_version
+        else session.intent_version if session else 0
+    )
 
     if not event.event_id:
         event.event_id = f"evt_{uuid.uuid4().hex[:12]}"

@@ -18,53 +18,45 @@ class StateSourceMapping:
 STATE_SOURCE_MAPPINGS = (
     StateSourceMapping(
         new_model="task_brief",
-        legacy_source="intent_states + session.intent_version",
+        legacy_source="intent_states + session.intent_version compatibility",
         shadow_table="task_brief_states",
-        can_switch_primary=False,
-        blocking_reason=(
-            "dispatch creation and resume still use session.intent_version as the "
-            "authoritative task_brief_version"
-        ),
+        can_switch_primary=True,
+        blocking_reason="",
         safe_next_step=(
-            "make dispatch creation read task_brief_states first, with "
-            "session.intent_version as fallback"
+            "move reducer write ownership to task_brief_states and keep "
+            "intent_states as compatibility output"
         ),
     ),
     StateSourceMapping(
         new_model="task_flow",
-        legacy_source="plan_states + progress_states + execution_actions",
+        legacy_source="plan_states compatibility + progress_states + execution_actions",
         shadow_table="task_flows",
-        can_switch_primary=False,
-        blocking_reason=(
-            "progress synthesis and blocking state still combine plan/progress "
-            "legacy tables"
-        ),
+        can_switch_primary=True,
+        blocking_reason="",
         safe_next_step=(
-            "move task-local progress reads to task_flows before replacing "
-            "plan_states reads"
+            "move reducer write ownership to task_flows and keep plan_states as "
+            "compatibility output"
         ),
     ),
     StateSourceMapping(
         new_model="claim",
-        legacy_source="belief_items",
+        legacy_source="belief_items compatibility",
         shadow_table="claim_items",
-        can_switch_primary=False,
-        blocking_reason="risk building and verification still read belief_items",
+        can_switch_primary=True,
+        blocking_reason="",
         safe_next_step=(
-            "switch task-scoped claim reads first, then keep belief_items only as "
-            "debug compatibility"
+            "move reducer write ownership to claim_items and keep belief_items "
+            "as compatibility output"
         ),
     ),
     StateSourceMapping(
         new_model="todo",
-        legacy_source="commitments",
+        legacy_source="commitments compatibility",
         shadow_table="todo_obligations",
-        can_switch_primary=False,
-        blocking_reason=(
-            "blocking reason, risks, and sync views still depend on commitments"
-        ),
+        can_switch_primary=True,
+        blocking_reason="",
         safe_next_step=(
-            "switch open todo/blocking reads to todo_obligations while keeping "
+            "move reducer write ownership to todo_obligations and keep "
             "commitments as compatibility output"
         ),
     ),

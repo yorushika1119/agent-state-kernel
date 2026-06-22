@@ -77,6 +77,22 @@ class KmsManager:
             enable_llm=self.enable_llm_router,
         )
 
+    async def _task_brief_version_for_session(
+        self,
+        session: Any,
+        *,
+        increment: int = 0,
+    ) -> int:
+        if session is None:
+            return increment
+        task_brief = await self.store.get_task_brief(session.kernel_session_id)
+        version = (
+            task_brief.task_brief_version
+            if task_brief and task_brief.task_brief_version
+            else session.intent_version
+        )
+        return version + increment
+
     async def dispatch_user_message(
         self,
         *,
@@ -145,7 +161,7 @@ class KmsManager:
             return DispatchDecision(
                 action="respond_from_kernel",
                 kernel_session_id=session.kernel_session_id if session else "",
-                intent_version=session.intent_version if session else 0,
+                intent_version=await self._task_brief_version_for_session(session),
                 run_id=session.active_run_id if session else "",
                 session_status=session.status.value if session else "unknown",
                 reason="task_route_needs_clarification",
@@ -175,7 +191,7 @@ class KmsManager:
             return DispatchDecision(
                 action="respond_from_kernel",
                 kernel_session_id=session.kernel_session_id,
-                intent_version=session.intent_version,
+                intent_version=await self._task_brief_version_for_session(session),
                 run_id=session.active_run_id or "",
                 session_status=session.status.value,
                 reason=intent.reason or "kernel_direct_status_reply",
@@ -210,6 +226,8 @@ class KmsManager:
         last_paused_task_id = session.last_paused_task_id or ""
         should_submit_message = True
         resume_context: Dict[str, Any] = {}
+        current_task_brief_version = await self._task_brief_version_for_session(session)
+        next_task_brief_version = current_task_brief_version + 1
         use_routed_task = (
             route.routing_decision == "select_existing"
             and route_target_task is not None
@@ -244,7 +262,7 @@ class KmsManager:
                     interrupted_run_id=previous_run_id,
                     user_session_id=user_session.user_session_id,
                     agent_id=agent_id,
-                    task_brief_version=session.intent_version,
+                    task_brief_version=current_task_brief_version,
                 )
             else:
                 last_paused_task_id = ""
@@ -254,7 +272,7 @@ class KmsManager:
                 run_id=run_id,
                 user_session_id=user_session.user_session_id,
                 agent_id=agent_id,
-                task_brief_version=session.intent_version + 1,
+                task_brief_version=next_task_brief_version,
             )
             active_task_id = routed_task.task_id
             action = "interrupt_and_replan" if previous_run_id else "start_new_task"
@@ -267,7 +285,7 @@ class KmsManager:
                 interrupted_run_id=previous_run_id,
                 user_session_id=user_session.user_session_id,
                 agent_id=agent_id,
-                task_brief_version=session.intent_version,
+                task_brief_version=current_task_brief_version,
                 fallback_last_paused_task_id=last_paused_task_id,
             )
             active_task_id = ""
@@ -301,7 +319,7 @@ class KmsManager:
                 return DispatchDecision(
                     action="respond_from_kernel",
                     kernel_session_id=session.kernel_session_id,
-                    intent_version=session.intent_version,
+                    intent_version=current_task_brief_version,
                     run_id=session.active_run_id or "",
                     session_status=session.status.value,
                     reason="no_paused_task_to_resume",
@@ -318,7 +336,7 @@ class KmsManager:
                     interrupted_run_id=previous_run_id,
                     user_session_id=user_session.user_session_id,
                     agent_id=agent_id,
-                    task_brief_version=session.intent_version,
+                    task_brief_version=current_task_brief_version,
                 )
             else:
                 last_paused_task_id = ""
@@ -328,7 +346,7 @@ class KmsManager:
                 run_id=run_id,
                 user_session_id=user_session.user_session_id,
                 agent_id=agent_id,
-                task_brief_version=session.intent_version + 1,
+                task_brief_version=next_task_brief_version,
             )
             active_task_id = resume_task.task_id
             action = "interrupt_and_replan" if previous_run_id else "start_new_task"
@@ -341,7 +359,7 @@ class KmsManager:
                 interrupted_run_id=previous_run_id,
                 user_session_id=user_session.user_session_id,
                 agent_id=agent_id,
-                task_brief_version=session.intent_version,
+                task_brief_version=current_task_brief_version,
                 fallback_last_paused_task_id=last_paused_task_id,
             )
             active_task_id = ""
@@ -359,6 +377,9 @@ class KmsManager:
             event = await self.lifecycle.submit_user_message(session.kernel_session_id, text)
 
         refreshed = await self.store.get_session(session.kernel_session_id)
+        refreshed_task_brief_version = await self._task_brief_version_for_session(
+            refreshed or session,
+        )
 
         if task_action == "continue_active_task":
             active_task = await self.task_switches.refresh_active_task_from_kernel_state(
@@ -366,7 +387,7 @@ class KmsManager:
                 run_id=run_id,
                 user_session_id=user_session.user_session_id,
                 agent_id=agent_id,
-                task_brief_version=refreshed.intent_version if refreshed else session.intent_version,
+                task_brief_version=refreshed_task_brief_version,
             )
         elif should_submit_message:
             active_task = await self.lifecycle.create_task_from_user_message(
@@ -377,11 +398,14 @@ class KmsManager:
                 session_status=refreshed.status.value if refreshed else "running",
             )
             refreshed = await self.store.get_session(session.kernel_session_id)
+            refreshed_task_brief_version = await self._task_brief_version_for_session(
+                refreshed or session,
+            )
             await self.task_switches.sync_global_task(
                 active_task,
                 user_session_id=user_session.user_session_id,
                 agent_id=agent_id,
-                task_brief_version=refreshed.intent_version if refreshed else session.intent_version,
+                task_brief_version=refreshed_task_brief_version,
             )
 
         thinker_dispatch = None
@@ -390,7 +414,7 @@ class KmsManager:
                 session=session,
                 task=active_task,
                 run_id=run_id,
-                task_brief_version=refreshed.intent_version if refreshed else session.intent_version,
+                task_brief_version=refreshed_task_brief_version,
                 dispatch_type=task_action or action,
                 user_text=text,
                 action=action,
@@ -404,7 +428,7 @@ class KmsManager:
         return DispatchDecision(
             action=action,
             kernel_session_id=session.kernel_session_id,
-            intent_version=event.intent_version if event else refreshed.intent_version,
+            intent_version=refreshed_task_brief_version,
             run_id=run_id,
             session_status=refreshed.status.value if refreshed else "running",
             reason=reason,
