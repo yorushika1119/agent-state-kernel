@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
 from src.kms.manager import KmsManager
 from src.kms.notification_coordinator import NotificationCoordinator
+from src.kms.state_source_audit import StateSourceAudit
 from src.kernel.engine import KernelEngine
 from src.stores.sqlite_store import SqliteStore
 from src.schema.events import EventSubmission
@@ -712,6 +713,11 @@ async def ack_talker_notification(notification_id: str):
 @app.post("/kms/talker/notifications/{notification_id}/resolve")
 async def resolve_talker_notification(notification_id: str):
     return await _resolve_notification(notification_id)
+
+
+@app.get("/kms/state-source-audit")
+async def get_state_source_audit():
+    return StateSourceAudit().as_dict()
 
 
 @app.get("/kernel/sessions/{session_id}/events")

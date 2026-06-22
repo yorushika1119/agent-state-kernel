@@ -100,6 +100,12 @@ flowchart TD
 | `task_conversation_refs` | task 级消息摘要和 runtime message 引用，不保存完整 transcript |
 | `runtime_refs` | runtime 消息、工具、结果引用索引 |
 
+当前状态源结论：
+
+- `intent_states / plan_states / belief_items / commitments` 仍是事实来源。
+- `task_brief_states / task_flows / claim_items / todo_obligations` 是 task-first 兼容影子层。
+- `GET /kms/state-source-audit` 可查看当前为什么不能整体切换主表。
+
 ## 5. 用户消息主流程
 
 ```text
@@ -266,6 +272,7 @@ ack / resolve
 | RuntimeEventAdapter 通用封装 | 已完成第一版 |
 | Observer / Talker notification SSE | 已完成第一版 |
 | Notification policy 去重 / 节流 / 优先级 | 已完成第一版 |
+| StateSourceAudit 主从切换审查 | 已完成第一版 |
 
 这些仍然是渐进式实现，不代表 Runtime 生态已经全部接完。
 
@@ -278,7 +285,7 @@ ack / resolve
 | Observer notification WebSocket | SSE 第一版已完成，WebSocket 未做 |
 | Notification 高级优先级策略 | 第一版策略表已完成，复杂升级策略未做 |
 | Observer/Talker 最终回复回传 | conversation ref API 和 Hermes 回传已完成第一版 |
-| 状态表主从切换 | 旧表仍是事实来源，不建议马上硬切 |
+| 状态表主从切换 | 已有审查接口，旧表仍是事实来源，不建议马上硬切 |
 
 ## 14. 不建议立刻做的事
 
