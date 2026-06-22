@@ -48,9 +48,13 @@ class ModelCall:
     失败时优雅降级——返回 None 而不是抛出异常。
     """
 
-    api_key: str = DEEPSEEK_API_KEY
+    api_key: str = ""
     model: str = DEFAULT_MODEL
     timeout: float = 15.0
+
+    def __post_init__(self) -> None:
+        if not self.api_key:
+            self.api_key = os.getenv("DEEPSEEK_API_KEY", "")
 
     async def ask(self, system: str, user: str, max_tokens: int = 200) -> Optional[str]:
         """发送提示词并返回原始字符串响应。失败时返回 None。
@@ -145,7 +149,7 @@ class SemanticConflictJudge(BaseJudge):
     - "市场增长" vs "销量暴跌"
     """
 
-    def __init__(self, api_key: str = DEEPSEEK_API_KEY):
+    def __init__(self, api_key: str = ""):
         self.model = ModelCall(api_key=api_key)
 
     @property
@@ -234,7 +238,7 @@ class ContentReliabilityJudge(BaseJudge):
     高风险判断会触发降级——如 SEO 农场伪装成新闻报道。
     """
 
-    def __init__(self, api_key: str = DEEPSEEK_API_KEY):
+    def __init__(self, api_key: str = ""):
         self.model = ModelCall(api_key=api_key)
 
     @property

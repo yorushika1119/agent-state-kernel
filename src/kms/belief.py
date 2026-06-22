@@ -13,7 +13,7 @@ import logging
 from typing import Any, Dict, List
 
 from src.kms.judges import BaseJudge, JudgeResult
-from src.kms.model import ModelCall, DEEPSEEK_API_KEY
+from src.kms.model import ModelCall
 from src.schema.events import CognitiveEvent, EventType
 from src.schema.state import BeliefItem, EvidenceItem
 
@@ -73,7 +73,7 @@ class BeliefReviewJudge(BaseJudge):
     生成修正的置信度和状态。偏差 ≥15% 时触发修正。
     """
 
-    def __init__(self, api_key: str = DEEPSEEK_API_KEY):
+    def __init__(self, api_key: str = ""):
         self.model = ModelCall(api_key=api_key)
 
     @property
