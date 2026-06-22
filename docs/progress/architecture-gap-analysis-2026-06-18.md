@@ -1490,3 +1490,52 @@ old dispatch=failed
 new dispatch=completed
 active_run=empty
 ```
+
+## 2026-06-22：legacy_debug 收窄到管理/调试视图
+
+本阶段继续收窄旧接口暴露面。
+
+代码变化：
+
+- `thinker_view` 不再输出 `legacy_debug`。
+- `legacy_debug` 只保留在：
+  - `manager_view`
+  - `debug_view`
+- `thinker_view` 现在只暴露新版主字段：
+  - `task_brief`
+  - `task_flow`
+  - `claims`
+  - `todos`
+- 新增扫描测试，禁止 `src/` 业务代码重新调用旧 getter：
+  - `get_intent`
+  - `get_plan`
+  - `get_beliefs`
+  - `get_commitments`
+- 允许例外仅剩：
+  - `src/kernel/engine.py`：生成 `legacy_debug`
+  - `src/stores/sqlite_store.py`：历史 fallback / 双写兼容
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' -q tests\test_state_primary_read_switch.py tests\test_state_source_audit.py tests\test_pipeline_event_flow.py tests\test_manager_observer_views.py
+27 passed
+
+python -m pytest -o addopts='' -q
+114 passed
+
+python scripts\live_llm_router_smoke.py
+passed
+
+python scripts\live_interrupt_demo.py --real-model --scenario interrupt
+ARCHITECTURE_GLOSSARY_CHECK: passed
+old dispatch=failed
+new dispatch=completed
+active_run=empty
+```
+
+当前结论：
+
+- Thinker 已不再消费旧形状调试输出。
+- 旧 getter 重新流入业务代码的风险已由测试拦截。
+- 旧表仍不能删，下一步要处理的是 `sqlite_store.py` 的双写和历史 fallback。

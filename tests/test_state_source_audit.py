@@ -73,6 +73,28 @@ def test_business_code_does_not_directly_query_legacy_state_tables():
     assert offenders == []
 
 
+def test_business_code_does_not_call_legacy_state_getters():
+    root = Path(__file__).resolve().parents[1]
+    allowed = {
+        Path("src/kernel/engine.py"),
+        Path("src/stores/sqlite_store.py"),
+    }
+    legacy_getter = re.compile(
+        r"\.(get_intent|get_plan|get_beliefs|get_commitments)\("
+    )
+
+    offenders: list[str] = []
+    for path in (root / "src").rglob("*.py"):
+        relative = path.relative_to(root)
+        if relative in allowed:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for match in legacy_getter.finditer(text):
+            offenders.append(f"{relative}: {match.group(0)}")
+
+    assert offenders == []
+
+
 @pytest.mark.asyncio
 async def test_state_source_audit_api_exposes_current_switch_decision():
     transport = httpx.ASGITransport(app=api_server.app)

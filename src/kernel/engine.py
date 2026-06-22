@@ -409,9 +409,6 @@ class KernelEngine:
                 if self._is_thinker_visible(ref.visibility)
             ],
             "risks": self._build_risks(claims, executions, todos),
-            "legacy_debug": self._build_legacy_debug(
-                await self._get_legacy_debug_state(session_id)
-            ),
         }
 
     async def get_observer_view(self, session_id: str) -> Optional[Dict[str, Any]]:

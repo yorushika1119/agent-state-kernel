@@ -97,3 +97,31 @@ passed
 python scripts\live_interrupt_demo.py --real-model --scenario interrupt
 ARCHITECTURE_GLOSSARY_CHECK: passed
 ```
+
+## 2026-06-22 补充审查：legacy_debug 收窄
+
+| 项目 | 当前结果 | 结论 |
+|---|---|---|
+| `thinker_view.legacy_debug` | 已移除 | Thinker 只消费新版任务状态 |
+| `manager_view.legacy_debug` | 保留 | 管理视角可继续排查兼容状态 |
+| `debug_view.legacy_debug` | 保留 | 调试视角可继续查看旧形状 |
+| 旧 getter 业务调用 | 新增扫描测试禁止 | 防止旧接口回流 |
+
+最新判断：
+
+- 新架构边界进一步清晰。
+- 旧形状已经从执行侧视图退场。
+- 旧表删除的主要阻塞点从 `pipeline/engine` 转移到 `sqlite_store` 的双写和历史 fallback。
+
+验证：
+
+```text
+python -m pytest -o addopts='' -q
+114 passed
+
+python scripts\live_llm_router_smoke.py
+passed
+
+python scripts\live_interrupt_demo.py --real-model --scenario interrupt
+ARCHITECTURE_GLOSSARY_CHECK: passed
+```
