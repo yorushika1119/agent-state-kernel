@@ -16,6 +16,13 @@
 | LLM Router | `python scripts/live_llm_router_smoke.py` | 验证真实模型能处理模糊任务路由 |
 | Hermes interrupt | `python scripts/live_interrupt_demo.py --real-model --scenario interrupt` | 验证真实 Hermes 打断链路 |
 
+旧表迁移相关验证：
+
+| 场景 | 命令 | 用途 |
+|---|---|---|
+| core 关闭旧表写入 | `KMS_WRITE_LEGACY_STATE_TABLES=0 python scripts/test_core.py` | 验证核心链路只写新表 |
+| integration 关闭旧表写入 | `KMS_WRITE_LEGACY_STATE_TABLES=0 python scripts/test_integration.py` | 验证 pipeline/打断/恢复重链路只写新表 |
+
 建议节奏：
 
 1. 平时小改先跑 `fast`。
@@ -37,6 +44,9 @@ python scripts/test_core.py
 
 python scripts/test_integration.py
 待重新测量
+
+KMS_WRITE_LEGACY_STATE_TABLES=0 python scripts/test_integration.py
+111 passed in 114.55s
 
 python scripts/test_full.py
 117 passed in 154.26s

@@ -1680,3 +1680,28 @@ KMS_WRITE_LEGACY_STATE_TABLES=0 python scripts\test_core.py
 - 但系统已经具备“停止写旧表”的测试开关。
 - core 层已经验证：关闭旧表写入后，核心链路仍能稳定运行。
 - 下一步可以在 integration 层继续用该开关扩大验证范围。
+
+### 旧表只读实验扩大到 integration
+
+本次在关闭旧表写入的情况下运行重集成测试层：
+
+```text
+KMS_WRITE_LEGACY_STATE_TABLES=0 python scripts\test_integration.py
+111 passed in 114.55s
+```
+
+覆盖范围包括：
+
+- pipeline event flow；
+- 打断 / 恢复；
+- requested user scenarios；
+- smoke interrupt；
+- architecture A/B experiment；
+- task directory router；
+- manager / observer views。
+
+结论：
+
+- 重集成链路也已经可以在“不写旧表”的情况下通过。
+- 旧表目前主要剩历史 fallback 和默认兼容双写职责。
+- 下一步可以考虑在测试策略里固定“旧表写入关闭”的 integration，或者开始评估把默认值从写旧表改为不写旧表。
