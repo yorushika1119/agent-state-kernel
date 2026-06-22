@@ -182,6 +182,80 @@ class KernelEngine:
                 ordered.append(risk)
         return ordered
 
+    def _build_recent_updates(self, executions, dispatches, notifications) -> list[dict[str, Any]]:
+        updates: list[dict[str, Any]] = []
+        for action in executions:
+            if action.tool in {"reasoning", "raw_result"}:
+                continue
+            text = action.input_summary or action.tool or action.action_id
+            if not text:
+                continue
+            updates.append(
+                {
+                    "at": (
+                        action.ended_at or action.started_at
+                    ).isoformat()
+                    if action.ended_at or action.started_at
+                    else None,
+                    "text": f"{action.status}:{text}",
+                    "source": "execution",
+                }
+            )
+        for dispatch in dispatches:
+            updates.append(
+                {
+                    "at": dispatch.updated_at.isoformat() if dispatch.updated_at else None,
+                    "text": f"dispatch:{dispatch.status.value}",
+                    "source": "thinker_dispatch",
+                }
+            )
+        for notification in notifications:
+            updates.append(
+                {
+                    "at": notification.created_at.isoformat() if notification.created_at else None,
+                    "text": notification.reason or notification.notification_type,
+                    "source": "notification",
+                }
+            )
+        updates.sort(key=lambda item: item["at"] or "", reverse=True)
+        return updates[:8]
+
+    def _build_blocking_reason(self, intent, progress, executions, commitments, session) -> Optional[str]:
+        pending_confirmation = next(
+            (
+                commitment.statement
+                for commitment in commitments
+                if commitment.requires_confirmation
+                and commitment.status.value == "pending"
+            ),
+            "",
+        )
+        failed_action = next(
+            (action.tool or action.action_id for action in executions if action.status == "failed"),
+            "",
+        )
+        if intent and intent.cancelled:
+            return "session_cancelled"
+        if pending_confirmation:
+            return "awaiting_user_confirmation"
+        if progress and progress.needs_user_input:
+            return "awaiting_user_input"
+        if progress and progress.status == "blocked":
+            return "task_blocked"
+        if failed_action:
+            return f"tool_failed:{failed_action}"
+        if session and session.last_interrupted_run_id:
+            return "interrupted_by_new_request"
+        return None
+
+    async def _ensure_progress(self, session_id: str) -> Optional[ProgressState]:
+        progress = await self.store.get_progress(session_id)
+        if progress:
+            return progress
+        from src.kms.pipeline import refresh_progress
+
+        return await refresh_progress(self.store, session_id)
+
     async def _get_raw_state(self, session_id: str) -> Dict[str, Any]:
         return {
             "session": await self.store.get_session(session_id),
@@ -343,6 +417,159 @@ class KernelEngine:
                 if self._is_thinker_visible(ref.visibility)
             ],
             "risks": self._build_risks(beliefs, executions, commitments),
+        }
+
+    async def get_observer_view(self, session_id: str) -> Optional[Dict[str, Any]]:
+        state = await self._get_raw_state(session_id)
+        session = state["session"]
+        if not session:
+            return None
+
+        progress = state["progress"] or await self._ensure_progress(session_id)
+        active_task = await self.store.get_task(
+            session_id,
+            session.active_task_id or "",
+        )
+        commitments = state["commitments"]
+        todos = state["todos"]
+        executions = state["executions"]
+        notifications = await self.store.list_observer_notifications(
+            target="observer",
+            kernel_session_id=session_id,
+            status="pending",
+        )
+        dispatches = state["thinker_dispatches"]
+        intent = state["intent"]
+
+        pending_confirmations = [
+            commitment.statement
+            for commitment in commitments
+            if commitment.requires_confirmation and commitment.status.value == "pending"
+        ]
+        blocking_reason = self._build_blocking_reason(
+            intent,
+            progress,
+            executions,
+            commitments,
+            session,
+        )
+        open_todos = [
+            todo.statement or todo.obligation_id
+            for todo in todos
+            if todo.status.value == "pending"
+        ]
+        status = progress.status if progress else session.status.value
+        if session.status.value in {"completed", "failed", "cancelled", "paused"}:
+            status = session.status.value
+
+        return {
+            "session_id": session_id,
+            "task_id": session.active_task_id,
+            "status": status,
+            "stage": (
+                progress.stage
+                if progress and progress.stage
+                else active_task.current_step_name
+                if active_task
+                else ""
+            ),
+            "one_line_summary": progress.summary if progress else "",
+            "summary_for_observer": progress.summary if progress else "",
+            "current_focus": active_task.current_step_name if active_task else "",
+            "recent_updates": self._build_recent_updates(
+                executions,
+                dispatches,
+                notifications,
+            ),
+            "safe_facts": progress.safe_facts if progress else [],
+            "uncertain_points": progress.unsafe_claims if progress else [],
+            "open_todos": open_todos,
+            "blocking_reason": blocking_reason,
+            "needs_user_input": bool(
+                (progress.needs_user_input if progress else False)
+                or pending_confirmations
+            ),
+            "user_question": pending_confirmations[0] if pending_confirmations else None,
+            "allowed_observer_actions": progress.allowed_actions if progress else [],
+            "forbidden_observer_actions": progress.forbidden_actions if progress else [],
+            "notifications": [notification.model_dump() for notification in notifications],
+        }
+
+    async def get_manager_view(self, session_id: str) -> Optional[Dict[str, Any]]:
+        state = await self._get_raw_state(session_id)
+        session = state["session"]
+        if not session:
+            return None
+
+        progress = state["progress"] or await self._ensure_progress(session_id)
+        task_brief = state["task_brief"]
+        task_flow = state["task_flow"]
+        tasks = state["tasks"]
+        beliefs = state["beliefs"]
+        executions = state["executions"]
+        commitments = state["commitments"]
+        todos = state["todos"]
+        dispatches = state["thinker_dispatches"]
+        intent = state["intent"]
+        active_task = await self.store.get_task(
+            session_id,
+            session.active_task_id or "",
+        )
+        global_task = await self.store.get_global_task(session.active_task_id)
+        notifications = await self.store.list_observer_notifications(
+            kernel_session_id=session_id,
+            status="pending",
+        )
+        pending_confirmations = [
+            commitment.statement
+            for commitment in commitments
+            if commitment.requires_confirmation and commitment.status.value == "pending"
+        ]
+        blocking_reason = self._build_blocking_reason(
+            intent,
+            progress,
+            executions,
+            commitments,
+            session,
+        )
+        summary = progress.summary if progress else ""
+        if session.status.value == "completed":
+            summary_for_manager = "任务已完成。"
+        elif blocking_reason:
+            summary_for_manager = f"当前阻塞: {blocking_reason}"
+        else:
+            summary_for_manager = summary
+
+        return {
+            "session": session.model_dump(),
+            "task_id": session.active_task_id,
+            "status": session.status.value,
+            "task_brief": task_brief.model_dump() if task_brief else None,
+            "task_flow": task_flow.model_dump() if task_flow else None,
+            "global_task": global_task.model_dump() if global_task else None,
+            "active_task": active_task.model_dump() if active_task else None,
+            "tasks": [task.model_dump() for task in tasks],
+            "summary_for_manager": summary_for_manager,
+            "progress": {
+                "status": progress.status if progress else session.status.value,
+                "stage": progress.stage if progress else "",
+                "summary": summary,
+                "safe_facts": progress.safe_facts if progress else [],
+                "uncertain_points": progress.unsafe_claims if progress else [],
+                "needs_user_input": progress.needs_user_input if progress else False,
+            },
+            "blocking_reason": blocking_reason,
+            "pending_confirmations": pending_confirmations,
+            "open_todos": [
+                todo.model_dump()
+                for todo in todos
+                if todo.status.value == "pending"
+            ],
+            "risks": self._build_risks(beliefs, executions, commitments),
+            "notifications": [notification.model_dump() for notification in notifications],
+            "thinker_dispatches": [dispatch.model_dump() for dispatch in dispatches],
+            "allowed_actions": progress.allowed_actions if progress else [],
+            "forbidden_actions": progress.forbidden_actions if progress else [],
         }
 
     async def get_sync_view(self, session_id: str) -> Optional[SyncView]:

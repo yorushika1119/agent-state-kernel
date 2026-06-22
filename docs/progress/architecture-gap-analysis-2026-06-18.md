@@ -1141,3 +1141,24 @@ pytest
 - `belief_items` / `commitments` 仍是旧 session 级主表，task-local 查询主要依赖 `claim_items` / `todo_obligations` 影子表。
 - legacy fallback 只能覆盖带 task/run 线索的旧事件，无法百分百还原所有历史归属。
 - 本阶段按用户要求不上传 GitHub；本地提交后仍需等网络恢复再统一 push。
+
+## 2026-06-22：manager_view / observer_view 第一版
+
+本阶段补齐新版架构中的视图分层入口，不新增状态表。
+
+核心变化：
+- 新增 `GET /kms/sessions/{session_id}/views/observer`。
+- 新增 `GET /kms/sessions/{session_id}/views/manager`。
+- `observer_view` 面向 Talker / Observer，只暴露可转述进度、安全事实、未确认点、待办、阻塞原因、允许/禁止动作和 pending observer notifications。
+- `manager_view` 面向 Manager UI / 用户管理视角，暴露 task brief、task flow、active task、任务列表、风险、待确认项、notifications 和 thinker dispatches。
+- `observer_view` 不暴露 raw belief、evidence、thinker dispatch 等内部执行细节。
+
+验证覆盖：
+- Observer 只能看到安全进度和通知，看不到内部状态。
+- Manager 能看到风险、待确认项、通知和 thinker dispatch。
+- 原有 pipeline view、thinker dispatch、打断、恢复、router 回归均通过。
+
+当前边界：
+- 仍是 HTTP 查询视图，不是订阅推送。
+- Notification policy 仍在 API 层做最小生成，后续应拆为 coordinator。
+- 旧状态表仍是事实来源，新命名表仍处于兼容/影子层。

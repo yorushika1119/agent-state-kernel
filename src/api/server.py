@@ -637,6 +637,24 @@ async def get_talker_view(session_id: str):
     return view.model_dump()
 
 
+@app.get("/kms/sessions/{session_id}/views/observer")
+async def get_observer_view(session_id: str):
+    engine = get_engine()
+    view = await engine.get_observer_view(session_id)
+    if not view:
+        raise HTTPException(status_code=404, detail="No observer view")
+    return view
+
+
+@app.get("/kms/sessions/{session_id}/views/manager")
+async def get_manager_view(session_id: str):
+    engine = get_engine()
+    view = await engine.get_manager_view(session_id)
+    if not view:
+        raise HTTPException(status_code=404, detail="No manager view")
+    return view
+
+
 @app.get("/kms/sessions/{session_id}/views/thinker")
 async def get_thinker_view(session_id: str):
     """Thinker 视图——全量派生状态：意图、计划、证据、信念、执行、承诺。"""
