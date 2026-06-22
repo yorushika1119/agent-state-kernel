@@ -11,7 +11,7 @@ from src.kms.dispatch_context import build_kernel_dispatch_context
 from src.kms.intent_classifier import classify_dispatch_intent_with_llm
 from src.kms.kernel_direct_responder import KernelDirectResponder
 from src.kms.task_coordinators import InterruptCoordinator, ResumeCoordinator
-from src.kms.task_context_router import route_task_context_with_llm
+from src.kms.task_routing_coordinator import TaskRoutingCoordinator
 from src.schema.events import EventSubmission, EventType
 from src.schema.state import TaskSnapshot, TaskStatus
 
@@ -47,6 +47,10 @@ class KmsManager:
             os.getenv("KMS_ENABLE_LLM_ROUTER") == "1"
             if enable_llm_router is None
             else enable_llm_router
+        )
+        self.task_router = TaskRoutingCoordinator(
+            store,
+            enable_llm=self.enable_llm_router,
         )
 
     async def _find_target_session(
@@ -157,36 +161,20 @@ class KmsManager:
         user_session_id: str = "",
         mode: str = "auto",
     ) -> DispatchDecision:
-        user_session = await self.store.observe_user_session(
+        routing = await self.task_router.route_message(
+            text,
             user_session_id=user_session_id,
             runtime_session_id=runtime_session_id,
             runtime_id=runtime_id,
             runtime_type=runtime_type,
             agent_id=agent_id,
         )
-        global_tasks = await self.store.list_global_tasks(
-            user_session_id=user_session.user_session_id,
-        )
-        route = await route_task_context_with_llm(
-            text,
-            user_session_id=user_session.user_session_id,
-            runtime_session_id=runtime_session_id,
-            tasks=global_tasks,
-            enable_llm=self.enable_llm_router,
-        )
-        await self.store.save_task_route_decision(route)
-        route_target_task = next(
-            (task for task in global_tasks if task.task_id == route.target_task_id),
-            None,
-        )
-        routed_session_id = (
-            route_target_task.kernel_session_id
-            if route.routing_decision == "select_existing" and route_target_task
-            else ""
-        )
+        user_session = routing.user_session
+        route = routing.route
+        route_target_task = routing.route_target_task
 
         session = await self._find_target_session(
-            target_session_id=target_session_id or routed_session_id,
+            target_session_id=target_session_id or routing.routed_session_id,
             runtime_session_id=runtime_session_id,
         )
         dispatch_context = await build_kernel_dispatch_context(self.store, session)
