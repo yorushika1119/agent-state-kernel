@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import os
-import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from src.kms.dispatch_lifecycle_coordinator import DispatchLifecycleCoordinator
 from src.kms.dispatch_context import build_kernel_dispatch_context
 from src.kms.intent_classifier import classify_dispatch_intent_with_llm
 from src.kms.kernel_direct_responder import KernelDirectResponder
 from src.kms.task_coordinators import InterruptCoordinator, ResumeCoordinator
 from src.kms.task_routing_coordinator import TaskRoutingCoordinator
-from src.schema.events import EventSubmission, EventType
 from src.schema.state import TaskSnapshot, TaskStatus
 
 
@@ -43,6 +42,7 @@ class KmsManager:
         self.direct_responder = KernelDirectResponder(store, engine)
         self.interrupts = InterruptCoordinator(store)
         self.resumes = ResumeCoordinator(store)
+        self.lifecycle = DispatchLifecycleCoordinator(store, engine)
         self.enable_llm_router = (
             os.getenv("KMS_ENABLE_LLM_ROUTER") == "1"
             if enable_llm_router is None
@@ -255,10 +255,9 @@ class KmsManager:
                 external_task_id=external_task_id,
             )
 
-        run_id = f"run_{uuid.uuid4().hex[:12]}"
+        run_id = self.lifecycle.new_run_id()
         previous_run_id = session.active_run_id or ""
         active_task = None
-        interrupt_event = None
         event = None
         reason = "" if created_session else "reuse_existing_session"
         action = "start_new_task" if created_session else "interrupt_and_replan"
@@ -410,43 +409,16 @@ class KmsManager:
             active_task_id = ""
             task_action = "start_new_task"
 
-        if previous_run_id:
-            interrupt_event = await self.engine.append_kernel_event(
-                session.kernel_session_id,
-                EventType.RUN_INTERRUPTED,
-                run_id=previous_run_id,
-                payload={
-                    "interrupted_run_id": previous_run_id,
-                    "interrupting_run_id": run_id,
-                    "reason": "superseded_by_new_user_message",
-                    "user_message": text,
-                },
-            )
-
-        await self.store.update_session_status(
-            session.kernel_session_id,
-            "running",
-            active_run_id=run_id,
+        await self.lifecycle.activate_run(
+            session,
+            run_id=run_id,
             active_task_id=active_task_id,
-            cancellation_token=0,
             last_paused_task_id=last_paused_task_id,
-            last_interrupted_run_id=previous_run_id,
-            last_interrupting_run_id=run_id if previous_run_id else "",
-            last_interrupt_reason="superseded_by_new_user_message" if previous_run_id else "",
-            last_interrupt_at=interrupt_event.created_at.isoformat() if interrupt_event else None,
+            user_message=text,
         )
 
         if should_submit_message:
-            ok, err, event = await self.engine.submit_event(
-                EventSubmission(
-                    session_id=session.kernel_session_id,
-                    component="talker",
-                    request_type="raw",
-                    payload={"text": text},
-                )
-            )
-            if not ok:
-                raise RuntimeError(err or "dispatch_user_message failed")
+            event = await self.lifecycle.submit_user_message(session.kernel_session_id, text)
 
         refreshed = await self.store.get_session(session.kernel_session_id)
 
@@ -477,17 +449,12 @@ class KmsManager:
                     task_brief_version=refreshed.intent_version if refreshed else session.intent_version,
                 )
         elif should_submit_message:
-            active_task = await self.store.create_task(
+            active_task = await self.lifecycle.create_task_from_user_message(
                 session.kernel_session_id,
-                title=text[:80],
-                goal=event.payload.get("goal", text) if event else text,
-                constraints=event.payload.get("constraints", []) if event else [],
-                last_run_id=run_id,
-            )
-            await self.store.update_session_status(
-                session.kernel_session_id,
-                refreshed.status.value if refreshed else "running",
-                active_task_id=active_task.task_id,
+                text=text,
+                run_id=run_id,
+                event=event,
+                session_status=refreshed.status.value if refreshed else "running",
             )
             refreshed = await self.store.get_session(session.kernel_session_id)
             await self._sync_global_task(
@@ -499,8 +466,8 @@ class KmsManager:
 
         thinker_dispatch = None
         if active_task:
-            thinker_dispatch = await self.store.create_thinker_dispatch(
-                kernel_session_id=session.kernel_session_id,
+            thinker_dispatch = await self.lifecycle.create_thinker_dispatch(
+                session_id=session.kernel_session_id,
                 task_id=active_task.task_id,
                 run_id=run_id,
                 task_brief_version=refreshed.intent_version if refreshed else session.intent_version,
