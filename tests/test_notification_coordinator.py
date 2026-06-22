@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.kms.notification_coordinator import NotificationCoordinator
+from src.stores.sqlite_store import SqliteStore
+
+
+async def build_store():
+    store = SqliteStore(":memory:")
+    await store.connect()
+    return store
+
+
+@pytest.mark.asyncio
+async def test_notification_coordinator_creates_task_done_notification():
+    store = await build_store()
+    try:
+        dispatch = await store.create_thinker_dispatch(
+            kernel_session_id="ask_notify_done",
+            task_id="task_notify_done",
+            run_id="run_notify_done",
+        )
+        notification = await NotificationCoordinator(store).notify_dispatch_completed(
+            dispatch,
+            session_status="completed",
+            active_run_completed=True,
+        )
+
+        assert notification is not None
+        assert notification.notification_type == "task_done"
+        assert notification.urgency == "normal"
+        assert notification.progress_ref == "run_notify_done"
+        assert notification.suggested_observer_context["dispatch_id"] == dispatch.dispatch_id
+        assert notification.delivery_policy["requires_user_visible_message"] is True
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_notification_coordinator_skips_stale_dispatch():
+    store = await build_store()
+    try:
+        dispatch = await store.create_thinker_dispatch(
+            kernel_session_id="ask_notify_stale",
+            task_id="task_notify_stale",
+            run_id="run_old",
+        )
+        notification = await NotificationCoordinator(store).notify_dispatch_completed(
+            dispatch,
+            session_status="completed",
+            active_run_completed=False,
+        )
+        notifications = await store.list_observer_notifications(
+            kernel_session_id="ask_notify_stale",
+        )
+
+        assert notification is None
+        assert notifications == []
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_notification_coordinator_creates_task_failed_notification():
+    store = await build_store()
+    try:
+        dispatch = await store.create_thinker_dispatch(
+            kernel_session_id="ask_notify_failed",
+            task_id="task_notify_failed",
+            run_id="run_notify_failed",
+        )
+        notification = await NotificationCoordinator(store).notify_dispatch_failed(
+            dispatch,
+            error="tool crashed",
+            active_run_completed=True,
+        )
+
+        assert notification is not None
+        assert notification.notification_type == "task_failed"
+        assert notification.urgency == "important"
+        assert notification.reason == "tool crashed"
+        assert notification.delivery_policy["requires_user_visible_message"] is True
+    finally:
+        await store.close()

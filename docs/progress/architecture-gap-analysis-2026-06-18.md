@@ -1190,3 +1190,24 @@ pytest
 - Thinker complete 回传的回答摘要会归档为 assistant ref。
 - Router 能利用 task conversation refs 选择正确 task。
 - manager / observer view 能看到最近 conversation refs。
+
+## 2026-06-22：NotificationCoordinator 第一版
+
+本阶段把 notification 生成策略从 API 层收敛到 KMS coordinator。
+
+核心变化：
+- 新增 `src/kms/notification_coordinator.py`。
+- API 的 thinker dispatch complete / fail endpoint 不再直接拼 observer notification。
+- `NotificationCoordinator.notify_dispatch_completed()` 负责生成 `task_done` 或 `progress_update`。
+- `NotificationCoordinator.notify_dispatch_failed()` 负责生成 `task_failed`。
+- stale dispatch 不生成 notification 的规则由 coordinator 统一处理。
+
+架构意义：
+- 更接近设计文档中的 Notification / Wakeup Orchestrator。
+- API 层只保留协议适配职责。
+- 后续通知去重、节流、优先级升级、SSE/WebSocket 推送可以继续在 coordinator 下扩展。
+
+当前边界：
+- 只覆盖 dispatch complete / fail。
+- 还没有根据 progress diff 自动判断是否通知。
+- 还没有推送通道，Observer / Talker 仍需查询 notification API。

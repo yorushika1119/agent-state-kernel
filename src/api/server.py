@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from src.kms.manager import KmsManager
+from src.kms.notification_coordinator import NotificationCoordinator
 from src.kernel.engine import KernelEngine
 from src.stores.sqlite_store import SqliteStore
 from src.schema.events import EventSubmission
@@ -103,34 +104,6 @@ class CompleteThinkerDispatchRequest(BaseModel):
 class FailThinkerDispatchRequest(BaseModel):
     error: str = ""
     session_status: str = "failed"
-
-
-async def _create_dispatch_notification(
-    engine: KernelEngine,
-    dispatch,
-    *,
-    notification_type: str,
-    urgency: str,
-    reason: str,
-) -> None:
-    await engine.store.create_observer_notification(
-        target="observer",
-        kernel_session_id=dispatch.kernel_session_id,
-        task_id=dispatch.task_id,
-        notification_type=notification_type,
-        urgency=urgency,
-        reason=reason,
-        progress_ref=dispatch.run_id,
-        suggested_observer_context={
-            "dispatch_id": dispatch.dispatch_id,
-            "run_id": dispatch.run_id,
-            "task_id": dispatch.task_id,
-        },
-        delivery_policy={
-            "dedupe_key": f"{dispatch.task_id or dispatch.kernel_session_id}:{notification_type}",
-            "requires_user_visible_message": notification_type in {"task_failed", "task_done"},
-        },
-    )
 
 
 def _message_ref_id(runtime_refs: Optional[dict]) -> str:
@@ -529,14 +502,12 @@ async def complete_thinker_dispatch(dispatch_id: str, req: CompleteThinkerDispat
             session_status=req.session_status,
         )
     updated = await engine.store.complete_thinker_dispatch(dispatch_id)
-    if completed_run:
-        await _create_dispatch_notification(
-            engine,
-            dispatch,
-            notification_type="task_done" if req.session_status == "completed" else "progress_update",
-            urgency="normal",
-            reason="thinker_dispatch_completed",
-        )
+    notifications = NotificationCoordinator(engine.store)
+    await notifications.notify_dispatch_completed(
+        dispatch,
+        session_status=req.session_status,
+        active_run_completed=completed_run,
+    )
     await _create_dispatch_conversation_ref(
         engine,
         dispatch,
@@ -566,14 +537,12 @@ async def fail_thinker_dispatch(dispatch_id: str, req: FailThinkerDispatchReques
             session_status=req.session_status,
         )
     updated = await engine.store.fail_thinker_dispatch(dispatch_id, error=req.error)
-    if completed_run:
-        await _create_dispatch_notification(
-            engine,
-            dispatch,
-            notification_type="task_failed",
-            urgency="important",
-            reason=req.error or "thinker_dispatch_failed",
-        )
+    notifications = NotificationCoordinator(engine.store)
+    await notifications.notify_dispatch_failed(
+        dispatch,
+        error=req.error,
+        active_run_completed=completed_run,
+    )
     return updated.model_dump()
 
 
