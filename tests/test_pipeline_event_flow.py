@@ -542,7 +542,7 @@ async def test_view_governance_separates_thinker_and_debug_views():
         assert "raw_ref" not in thinker_view["evidence"][0]
         assert "output_ref" not in thinker_view["executions"][0]
         assert thinker_view["executions"][0]["has_output"] is True
-        assert all(b["belief_id"] != "b_private" for b in thinker_view["beliefs"])
+        assert all(b["claim_id"] != "b_private" for b in thinker_view["claims"])
         assert all(r["kernel_ref_id"] != "rref_private" for r in thinker_view["runtime_references"])
         assert "tool_constraints" in thinker_view
         assert "cancellation" in thinker_view
@@ -550,7 +550,7 @@ async def test_view_governance_separates_thinker_and_debug_views():
 
         assert debug_view["evidence"][0]["raw_ref"] == "raw_view_ref"
         assert debug_view["executions"][0]["output_ref"] == "tool_result_view"
-        assert any(b["belief_id"] == "b_private" for b in debug_view["beliefs"])
+        assert any(b["claim_id"] == "b_private" for b in debug_view["claims"])
         assert any(r["kernel_ref_id"] == "rref_private" for r in debug_view["runtime_references"])
     finally:
         await store.close()
@@ -971,7 +971,7 @@ async def test_dispatch_user_message_creates_run_and_updates_thinker_view():
         thinker_view = await engine.get_thinker_view(decision.kernel_session_id)
         assert thinker_view["cancellation"]["active_run_id"] == decision.run_id
         assert thinker_view["cancellation"]["intent_version"] == 1
-        assert thinker_view["intent"]["goal"]
+        assert thinker_view["task_brief"]["goal"]
     finally:
         await store.close()
 

@@ -20,7 +20,8 @@ def test_state_source_audit_reports_primary_read_switch_complete():
     assert report["can_switch_all"] is True
     assert report["legacy_direct_sql_frozen"] is True
     assert report["legacy_tables_removable"] is False
-    assert "src/kms/pipeline.py" in report["remaining_compat_getter_files"]
+    assert "src/kms/pipeline.py" not in report["remaining_compat_getter_files"]
+    assert "src/kernel/engine.py" in report["remaining_compat_getter_files"]
     assert {item["new_model"] for item in report["mappings"]} == {
         "task_brief",
         "task_flow",
@@ -45,8 +46,8 @@ def test_state_source_audit_records_legacy_compat_next_steps():
     assert "plan_states" in by_model["task_flow"]["legacy_source"]
     assert "belief_items" in by_model["claim"]["legacy_source"]
     assert "commitments" in by_model["todo"]["legacy_source"]
-    assert "compatibility output" in by_model["task_brief"]["safe_next_step"]
-    assert "reducer write ownership" in by_model["claim"]["safe_next_step"]
+    assert "legacy storage fallback" in by_model["task_brief"]["safe_next_step"]
+    assert "migrate callers to claim_items" in by_model["claim"]["safe_next_step"]
 
 
 def test_business_code_does_not_directly_query_legacy_state_tables():

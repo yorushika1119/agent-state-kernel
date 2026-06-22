@@ -259,6 +259,14 @@ class KernelEngine:
             ],
         }
 
+    async def _get_legacy_debug_state(self, session_id: str) -> Dict[str, Any]:
+        return {
+            "intent": await self.store.get_intent(session_id),
+            "plan": await self.store.get_plan(session_id),
+            "beliefs": await self.store.get_beliefs(session_id),
+            "commitments": await self.store.get_commitments(session_id),
+        }
+
     def _current_step_from_flow(self, task_flow) -> Optional[Dict[str, Any]]:
         if not task_flow or not task_flow.current_step:
             return None
@@ -279,17 +287,13 @@ class KernelEngine:
     async def _get_raw_state(self, session_id: str) -> Dict[str, Any]:
         return {
             "session": await self.store.get_session(session_id),
-            "intent": await self.store.get_intent(session_id),
             "task_brief": await self.store.get_task_brief(session_id),
-            "plan": await self.store.get_plan(session_id),
             "task_flow": await self.store.get_task_flow(session_id),
             "progress": await self.store.get_progress(session_id),
             "tasks": await self.store.list_tasks(session_id),
             "evidence": await self.store.get_evidence(session_id),
-            "beliefs": await self.store.get_beliefs(session_id),
             "claims": await self.store.get_claim_items(session_id),
             "executions": await self.store.get_executions(session_id),
-            "commitments": await self.store.get_commitments(session_id),
             "todos": await self.store.get_todo_obligations(session_id),
             "thinker_dispatches": await self.store.list_thinker_dispatches(
                 kernel_session_id=session_id
@@ -300,17 +304,13 @@ class KernelEngine:
     async def get_thinker_view(self, session_id: str) -> Dict[str, Any]:
         state = await self._get_raw_state(session_id)
         session = state["session"]
-        intent = state["intent"]
         task_brief = state["task_brief"]
-        plan = state["plan"]
         task_flow = state["task_flow"]
         progress = state["progress"]
         tasks = state["tasks"]
         evidence = state["evidence"]
-        beliefs = state["beliefs"]
         claims = state["claims"]
         executions = state["executions"]
-        commitments = state["commitments"]
         todos = state["todos"]
         thinker_dispatches = state["thinker_dispatches"]
         runtime_references = state["runtime_references"]
@@ -324,9 +324,7 @@ class KernelEngine:
 
         return {
             "session": session.model_dump() if session else None,
-            "intent": intent.model_dump() if intent else None,
             "task_brief": task_brief.model_dump() if task_brief else None,
-            "plan": plan.model_dump() if plan else None,
             "task_flow": task_flow.model_dump() if task_flow else None,
             "tasks": [task.model_dump() for task in tasks],
             "current_step": current_step,
@@ -373,21 +371,11 @@ class KernelEngine:
                 }
                 for item in evidence
             ],
-            "beliefs": [
-                {
-                    "belief_id": belief.belief_id,
-                    "claim": belief.claim,
-                    "status": belief.status.value,
-                    "confidence": belief.confidence,
-                    "supporting_evidence": belief.supporting_evidence,
-                    "conflicting_evidence": belief.conflicting_evidence,
-                    "visibility": belief.visibility,
-                    "last_verified_at": belief.last_verified_at.isoformat() if belief.last_verified_at else None,
-                }
-                for belief in beliefs
-                if self._is_thinker_visible(belief.visibility)
+            "claims": [
+                claim.model_dump()
+                for claim in claims
+                if self._is_thinker_visible(claim.visibility)
             ],
-            "claims": [claim.model_dump() for claim in claims],
             "executions": [
                 {
                     "action_id": action.action_id,
@@ -403,17 +391,6 @@ class KernelEngine:
                 }
                 for action in executions
                 if action.tool not in {"reasoning", "raw_result"}
-            ],
-            "commitments": [
-                {
-                    "commitment_id": commitment.commitment_id,
-                    "statement": commitment.statement,
-                    "status": commitment.status.value,
-                    "requires_confirmation": commitment.requires_confirmation,
-                    "related_intent_version": commitment.related_intent_version,
-                }
-                for commitment in commitments
-                if commitment.status.value == "pending" or commitment.requires_confirmation
             ],
             "todos": [todo.model_dump() for todo in todos],
             "thinker_dispatches": [dispatch.model_dump() for dispatch in thinker_dispatches],
@@ -432,7 +409,9 @@ class KernelEngine:
                 if self._is_thinker_visible(ref.visibility)
             ],
             "risks": self._build_risks(claims, executions, todos),
-            "legacy_debug": self._build_legacy_debug(state),
+            "legacy_debug": self._build_legacy_debug(
+                await self._get_legacy_debug_state(session_id)
+            ),
         }
 
     async def get_observer_view(self, session_id: str) -> Optional[Dict[str, Any]]:
@@ -599,7 +578,9 @@ class KernelEngine:
             "thinker_dispatches": [dispatch.model_dump() for dispatch in dispatches],
             "allowed_actions": progress.allowed_actions if progress else [],
             "forbidden_actions": progress.forbidden_actions if progress else [],
-            "legacy_debug": self._build_legacy_debug(state),
+            "legacy_debug": self._build_legacy_debug(
+                await self._get_legacy_debug_state(session_id)
+            ),
         }
 
     async def get_sync_view(self, session_id: str) -> Optional[SyncView]:
@@ -613,21 +594,19 @@ class KernelEngine:
         return {
             "events": events,
             "session": state["session"].model_dump() if state["session"] else None,
-            "intent": state["intent"].model_dump() if state["intent"] else None,
             "task_brief": state["task_brief"].model_dump() if state["task_brief"] else None,
-            "plan": state["plan"].model_dump() if state["plan"] else None,
             "task_flow": state["task_flow"].model_dump() if state["task_flow"] else None,
             "progress": state["progress"].model_dump() if state["progress"] else None,
             "tasks": [task.model_dump() for task in state["tasks"]],
             "evidence": [item.model_dump() for item in state["evidence"]],
-            "beliefs": [belief.model_dump() for belief in state["beliefs"]],
             "claims": [claim.model_dump() for claim in state["claims"]],
             "executions": [action.model_dump() for action in state["executions"]],
-            "commitments": [commitment.model_dump() for commitment in state["commitments"]],
             "todos": [todo.model_dump() for todo in state["todos"]],
             "thinker_dispatches": [dispatch.model_dump() for dispatch in state["thinker_dispatches"]],
             "runtime_references": [ref.model_dump() for ref in state["runtime_references"]],
-            "legacy_debug": self._build_legacy_debug(state),
+            "legacy_debug": self._build_legacy_debug(
+                await self._get_legacy_debug_state(session_id)
+            ),
         }
 
     async def ask_can_say(

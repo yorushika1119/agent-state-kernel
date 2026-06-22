@@ -159,6 +159,14 @@ async def test_legacy_getters_prefer_task_first_state_when_both_exist():
         assert thinker_view["legacy_debug"]["plan"]["current_step"] == "new_step"
         assert thinker_view["legacy_debug"]["beliefs"][0]["claim"] == "new claim"
         assert thinker_view["legacy_debug"]["commitments"][0]["statement"] == "new todo"
+
+        for legacy_key in ("intent", "plan", "beliefs", "commitments"):
+            assert legacy_key not in thinker_view
+
+        debug_view = await engine.get_debug_view(session.kernel_session_id)
+        for legacy_key in ("intent", "plan", "beliefs", "commitments"):
+            assert legacy_key not in debug_view
+        assert debug_view["legacy_debug"]["intent"]["goal"] == "new goal"
     finally:
         await store.close()
 

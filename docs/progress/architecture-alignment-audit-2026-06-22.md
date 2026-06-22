@@ -68,3 +68,32 @@
 - 当前已经从“影子新表”推进到“新表主读 + 旧表兼容输出”。
 - 还没到最终形态，因为旧命名字段仍在 API 视图顶层保留。
 - 后续要把调用方逐步迁到新版字段，再收窄旧字段到 `legacy_debug`，最后评估删旧表。
+
+## 2026-06-22 补充审查：旧顶层字段退场
+
+| 项目 | 当前结果 | 结论 |
+|---|---|---|
+| `thinker_view` 旧顶层字段 | `intent/plan/beliefs/commitments` 已移除 | 调用方应使用新版字段 |
+| `debug_view` 旧顶层字段 | `intent/plan/beliefs/commitments` 已移除 | 旧形状只保留在 `legacy_debug` |
+| `pipeline` 旧 getter 依赖 | 不再直接调用 `get_intent/get_plan/get_beliefs/get_commitments` | 已退出剩余兼容 getter 列表 |
+| `engine` 旧 getter 依赖 | 仅用于生成 `legacy_debug` | 仍需保留 |
+| `sqlite_store` 旧表依赖 | 仍负责历史 fallback 和双写兼容 | 仍需保留 |
+
+最新判断：
+
+- 架构没有偏离，反而更贴近新版设计。
+- 当前已经完成“旧字段从主视图退场”。
+- 下一阶段应收窄 `legacy_debug` 的使用范围，并逐步减少 `sqlite_store` 对旧表的双写职责。
+
+验证：
+
+```text
+python -m pytest -o addopts='' -q
+113 passed
+
+python scripts\live_llm_router_smoke.py
+passed
+
+python scripts\live_interrupt_demo.py --real-model --scenario interrupt
+ARCHITECTURE_GLOSSARY_CHECK: passed
+```

@@ -23,8 +23,8 @@ STATE_SOURCE_MAPPINGS = (
         can_switch_primary=True,
         blocking_reason="",
         safe_next_step=(
-            "move reducer write ownership to task_brief_states and keep "
-            "intent_states as compatibility output"
+            "migrate callers to task_brief and keep intent_states only as "
+            "legacy storage fallback"
         ),
     ),
     StateSourceMapping(
@@ -34,8 +34,8 @@ STATE_SOURCE_MAPPINGS = (
         can_switch_primary=True,
         blocking_reason="",
         safe_next_step=(
-            "move reducer write ownership to task_flows and keep plan_states as "
-            "compatibility output"
+            "migrate callers to task_flow and keep plan_states only as "
+            "legacy storage fallback"
         ),
     ),
     StateSourceMapping(
@@ -45,8 +45,8 @@ STATE_SOURCE_MAPPINGS = (
         can_switch_primary=True,
         blocking_reason="",
         safe_next_step=(
-            "move reducer write ownership to claim_items and keep belief_items "
-            "as compatibility output"
+            "migrate callers to claim_items and keep belief_items only as "
+            "legacy storage fallback"
         ),
     ),
     StateSourceMapping(
@@ -56,15 +56,14 @@ STATE_SOURCE_MAPPINGS = (
         can_switch_primary=True,
         blocking_reason="",
         safe_next_step=(
-            "move reducer write ownership to todo_obligations and keep "
-            "commitments as compatibility output"
+            "migrate callers to todo_obligations and keep commitments only as "
+            "legacy storage fallback"
         ),
     ),
 )
 
 REMAINING_COMPAT_GETTER_FILES = (
     "src/kernel/engine.py",
-    "src/kms/pipeline.py",
     "src/stores/sqlite_store.py",
 )
 

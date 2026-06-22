@@ -165,11 +165,11 @@ async def test_new_architecture_has_queryable_state_old_architecture_has_transcr
         assert not old.has_structured_state()
         assert old.transcript
 
-        assert thinker_view["plan"]["plan_id"] == "plan_ab_state"
-        assert len(thinker_view["plan"]["steps"]) == 3
+        assert thinker_view["task_flow"]["flow_id"] == "plan_ab_state"
+        assert len(thinker_view["task_flow"]["steps"]) == 3
         assert thinker_view["executions"][0]["action_id"] == "act_collect_state"
         assert thinker_view["evidence"][0]["evidence_id"] == "ev_state_ledger"
-        assert thinker_view["beliefs"][0]["belief_id"] == "b_state_advantage"
+        assert thinker_view["claims"][0]["claim_id"] == "b_state_advantage"
         assert talker_view is not None
         assert talker_view.status in {"running", "completed"}
     finally:

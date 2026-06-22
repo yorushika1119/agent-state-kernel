@@ -220,7 +220,7 @@ async def test_unrelated_second_request_then_resume_first_task():
         assert view_after_resume["cancellation"]["active_run_id"] == resume.run_id
         assert view_after_resume["cancellation"]["active_task_id"] == first.task_id
         assert view_after_resume["cancellation"]["last_interrupted_run_id"] == second.run_id
-        assert view_after_resume["intent"]["goal"] == resume.resume_context["goal"]
+        assert view_after_resume["task_brief"]["goal"] == resume.resume_context["goal"]
 
         ok, reason, resumed_event = await engine.submit_event(
             EventSubmission(

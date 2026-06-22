@@ -1429,3 +1429,64 @@ python -m pytest -o addopts='' -q
 2. 为旧字段增加 deprecation 文档和迁移检查。
 3. 等旧字段不再被测试和调用方依赖后，再把 `legacy_debug` 也限制到 debug/manager 场景。
 4. 最后才评估删除 `intent_states/plan_states/belief_items/commitments`。
+
+## 2026-06-22：旧顶层视图字段退场
+
+本阶段继续推进“旧接口退场”，重点不是新增能力，而是减少旧架构暴露面。
+
+代码变化：
+
+- `thinker_view` 顶层不再输出：
+  - `intent`
+  - `plan`
+  - `beliefs`
+  - `commitments`
+- `debug_view` 顶层也不再输出上述旧字段。
+- 旧命名形状统一进入 `legacy_debug`。
+- `thinker_view["claims"]` 按 visibility 过滤，避免把 private claim 暴露给 Thinker 视图。
+- `engine._get_raw_state()` 不再默认读取旧兼容 getter。
+- 只有生成 `legacy_debug` 时，才调用 `engine._get_legacy_debug_state()` 读取旧形状兼容输出。
+- `StateSourceAudit.remaining_compat_getter_files` 移除 `src/kms/pipeline.py`，目前剩余：
+  - `src/kernel/engine.py`
+  - `src/stores/sqlite_store.py`
+
+测试变化：
+
+- 视图测试改为使用：
+  - `task_brief`
+  - `task_flow`
+  - `claims`
+  - `todos`
+- 新增断言：`thinker_view/debug_view` 顶层不能再出现旧字段。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' -q tests\test_state_primary_read_switch.py tests\test_pipeline_event_flow.py tests\test_architecture_ab_experiment.py
+23 passed
+
+python -m pytest -o addopts='' -q tests\test_state_source_audit.py
+4 passed
+```
+
+当前结论：
+
+- 旧顶层 API 已开始退场。
+- `pipeline` 已不再是旧兼容 getter 依赖点。
+- 旧表仍不能物理删除，因为 `sqlite_store.py` 还负责历史 fallback 和双写兼容，`engine.py` 仍负责 `legacy_debug`。
+
+最终验证补充：
+
+```text
+python -m pytest -o addopts='' -q
+113 passed
+
+python scripts\live_llm_router_smoke.py
+passed
+
+python scripts\live_interrupt_demo.py --real-model --scenario interrupt
+ARCHITECTURE_GLOSSARY_CHECK: passed
+old dispatch=failed
+new dispatch=completed
+active_run=empty
+```
