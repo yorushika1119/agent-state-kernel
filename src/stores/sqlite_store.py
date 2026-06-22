@@ -90,7 +90,7 @@ class SqliteStore:
         self.conn: Optional[aiosqlite.Connection] = None
 
     def _write_legacy_state_tables(self) -> bool:
-        value = os.getenv("KMS_WRITE_LEGACY_STATE_TABLES", "1")
+        value = os.getenv("KMS_WRITE_LEGACY_STATE_TABLES", "0")
         return value.strip().lower() not in LEGACY_WRITE_DISABLED_VALUES
 
     # ==================================================================

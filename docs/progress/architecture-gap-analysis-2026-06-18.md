@@ -1705,3 +1705,40 @@ KMS_WRITE_LEGACY_STATE_TABLES=0 python scripts\test_integration.py
 - 重集成链路也已经可以在“不写旧表”的情况下通过。
 - 旧表目前主要剩历史 fallback 和默认兼容双写职责。
 - 下一步可以考虑在测试策略里固定“旧表写入关闭”的 integration，或者开始评估把默认值从写旧表改为不写旧表。
+
+### 默认停止写旧状态表
+
+本阶段把旧状态表写入策略从“默认双写”改为“默认不写旧表”。
+
+当前行为：
+
+- 默认不写旧表；
+- 新状态继续写入：
+  - `task_brief_states`
+  - `task_flows`
+  - `claim_items`
+  - `todo_obligations`
+- 旧状态表仍保留读取 fallback；
+- 如需临时恢复旧表双写，可以设置：
+
+```text
+KMS_WRITE_LEGACY_STATE_TABLES=1
+```
+
+新增/调整测试：
+
+- `test_legacy_state_table_writes_are_disabled_by_default`
+- `test_can_opt_into_legacy_state_table_writes`
+
+按要求只运行 integration：
+
+```text
+python scripts\test_integration.py
+112 passed in 117.05s
+```
+
+结论：
+
+- 默认不写旧表后，重集成链路仍然通过。
+- 旧表现在主要承担历史数据 fallback，而不是新数据写入职责。
+- 下一步可以继续观察真实 smoke，之后再评估是否移除旧表双写代码本身。

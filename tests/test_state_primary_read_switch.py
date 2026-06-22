@@ -182,8 +182,7 @@ async def test_legacy_getters_prefer_task_first_state_when_both_exist():
 
 
 @pytest.mark.asyncio
-async def test_can_disable_legacy_state_table_writes(monkeypatch):
-    monkeypatch.setenv("KMS_WRITE_LEGACY_STATE_TABLES", "0")
+async def test_legacy_state_table_writes_are_disabled_by_default():
     store, engine = await build_runtime()
     try:
         session = await engine.create_session(agent_id="agent-no-legacy-write")
@@ -250,6 +249,23 @@ async def test_can_disable_legacy_state_table_writes(monkeypatch):
         assert thinker_view["task_flow"]["flow_id"] == "plan_new_only"
         assert thinker_view["claims"][0]["claim"] == "new table claim"
         assert thinker_view["todos"][0]["statement"] == "new table todo"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_can_opt_into_legacy_state_table_writes(monkeypatch):
+    monkeypatch.setenv("KMS_WRITE_LEGACY_STATE_TABLES", "1")
+    store, engine = await build_runtime()
+    try:
+        session = await engine.create_session(agent_id="agent-legacy-write-opt-in")
+        await store.save_intent(
+            session.kernel_session_id,
+            IntentState(intent_version=1, goal="legacy opt in"),
+        )
+
+        assert await count_rows(store, "task_brief_states", session.kernel_session_id) == 1
+        assert await count_rows(store, "intent_states", session.kernel_session_id) == 1
     finally:
         monkeypatch.delenv("KMS_WRITE_LEGACY_STATE_TABLES", raising=False)
         await store.close()
