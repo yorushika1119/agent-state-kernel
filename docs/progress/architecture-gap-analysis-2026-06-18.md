@@ -1259,3 +1259,26 @@ pytest
 - 旧表没有物理删除。
 - reducer 入口函数名仍保留旧命名，内部通过 store 写入新版主表和旧兼容表。
 - 下一步如果继续推进，应先冻结旧表直接读取依赖，再考虑删除或迁移历史数据。
+
+## 2026-06-22：Thinker 架构词汇提示接入
+
+本阶段处理真实大模型 smoke 中暴露的概念混淆问题：Hermes/Thinker 在回答项目架构时，曾把 KMS 解释成 Kernel Memory System 或 Judge，这和当前架构文档不一致。
+
+核心变化：
+- 在真实 Hermes 部署目录加入 Runtime-side Agent State Kernel 词汇说明。
+- 仅当 Hermes 配置了 `gateway.kernel_url` 时注入，避免影响纯 Hermes 使用。
+- 明确 Kernel 是底层状态内核，负责事件日志、状态表、reducer 和 views。
+- 明确 KMS 是 Kernel 上层管理调度层，负责用户消息调度、任务路由、打断/恢复、thinker dispatch、通知和状态解释。
+- 明确 Thinker 是 Hermes 执行推理和工具调用的进程。
+- 明确 Talker / Observer 是外部交互和展示层。
+
+验证结果：
+```text
+python -m pytest -o addopts='' -q tests\agent\test_system_prompt.py
+7 passed
+```
+
+当前边界：
+- 本阶段只改 Thinker 的系统提示，不改 dispatch、Gateway、CLI 执行逻辑。
+- 这能降低真实模型解释架构时的跑偏概率，但不能替代后续真实 LLM smoke。
+- Hermes 真实目录只做本地提交，不推远端。
