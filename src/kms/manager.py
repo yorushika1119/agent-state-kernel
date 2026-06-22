@@ -12,6 +12,7 @@ from src.kms.dispatch_context import build_kernel_dispatch_context
 from src.kms.intent_classifier import classify_dispatch_intent_with_llm
 from src.kms.kernel_direct_reply_coordinator import KernelDirectReplyCoordinator
 from src.kms.kernel_direct_responder import KernelDirectResponder
+from src.kms.kernel_session_coordinator import KernelSessionCoordinator
 from src.kms.route_clarification_coordinator import RouteClarificationCoordinator
 from src.kms.task_coordinators import (
     InterruptCoordinator,
@@ -46,6 +47,7 @@ class KmsManager:
     def __init__(self, store, engine, *, enable_llm_router: bool | None = None):
         self.store = store
         self.engine = engine
+        self.sessions = KernelSessionCoordinator(store, engine)
         self.direct_responder = KernelDirectResponder(store, engine)
         self.interrupts = InterruptCoordinator(store)
         self.resumes = ResumeCoordinator(store)
@@ -74,20 +76,6 @@ class KmsManager:
             store,
             enable_llm=self.enable_llm_router,
         )
-
-    async def _find_target_session(
-        self,
-        *,
-        target_session_id: str,
-        runtime_session_id: str,
-    ):
-        session = None
-        if target_session_id:
-            session = await self.store.get_session(target_session_id)
-        elif runtime_session_id:
-            sessions = await self.store.list_sessions_by_runtime_session(runtime_session_id, limit=1)
-            session = sessions[0] if sessions else None
-        return session
 
     async def dispatch_user_message(
         self,
@@ -118,7 +106,7 @@ class KmsManager:
         route = routing.route
         route_target_task = routing.route_target_task
 
-        session = await self._find_target_session(
+        session = await self.sessions.find_target_session(
             target_session_id=target_session_id or routing.routed_session_id,
             runtime_session_id=runtime_session_id,
         )
@@ -199,19 +187,17 @@ class KmsManager:
                 route_decision=route.routing_decision,
             )
 
-        created_session = False
-        if session is None:
-            created_session = True
-            session = await self.engine.create_session(
-                agent_id=agent_id,
-                runtime_id=runtime_id,
-                runtime_session_id=runtime_session_id,
-                runtime_type=runtime_type,
-                external_source=external_source,
-                external_workspace_id=external_workspace_id,
-                external_issue_id=external_issue_id,
-                external_task_id=external_task_id,
-            )
+        session, created_session = await self.sessions.get_or_create_session(
+            session,
+            agent_id=agent_id,
+            runtime_id=runtime_id,
+            runtime_session_id=runtime_session_id,
+            runtime_type=runtime_type,
+            external_source=external_source,
+            external_workspace_id=external_workspace_id,
+            external_issue_id=external_issue_id,
+            external_task_id=external_task_id,
+        )
 
         run_id = self.lifecycle.new_run_id()
         previous_run_id = session.active_run_id or ""
