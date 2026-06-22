@@ -11,6 +11,7 @@ from src.kms.dispatch_lifecycle_coordinator import DispatchLifecycleCoordinator
 from src.kms.dispatch_context import build_kernel_dispatch_context
 from src.kms.intent_classifier import classify_dispatch_intent_with_llm
 from src.kms.kernel_direct_responder import KernelDirectResponder
+from src.kms.route_clarification_coordinator import RouteClarificationCoordinator
 from src.kms.task_coordinators import InterruptCoordinator, ResumeCoordinator
 from src.kms.task_routing_coordinator import TaskRoutingCoordinator
 from src.schema.state import TaskSnapshot, TaskStatus
@@ -45,6 +46,7 @@ class KmsManager:
         self.resumes = ResumeCoordinator(store)
         self.lifecycle = DispatchLifecycleCoordinator(store, engine)
         self.conversation_refs = ConversationRefCoordinator(store)
+        self.route_clarifications = RouteClarificationCoordinator(store)
         self.enable_llm_router = (
             os.getenv("KMS_ENABLE_LLM_ROUTER") == "1"
             if enable_llm_router is None
@@ -131,22 +133,6 @@ class KmsManager:
             target_task_id=target_task_id,
         )
 
-    def _build_route_clarification_response(self, route) -> str:
-        question = route.clarification_question or "你指的是哪一个任务？"
-        if not route.candidate_tasks:
-            return question
-        parts = []
-        for index, task in enumerate(route.candidate_tasks, start=1):
-            title = (
-                task.get("title")
-                or task.get("task_description")
-                or task.get("task_id")
-                or "未命名任务"
-            )
-            status = task.get("status") or "unknown"
-            parts.append(f"{index}. {title}（{status}）")
-        return question + "\n" + "\n".join(parts)
-
     async def dispatch_user_message(
         self,
         *,
@@ -203,29 +189,14 @@ class KmsManager:
         )
 
         if route_clarification_applies:
-            clarification_response = self._build_route_clarification_response(route)
-            await self.conversation_refs.record(
-                text_summary=text,
+            clarification_response = self.route_clarifications.build_response(route)
+            await self.route_clarifications.record_exchange(
+                user_text=text,
+                response_text=clarification_response,
                 user_session_id=user_session.user_session_id,
                 kernel_session_id=session.kernel_session_id if session else "",
-                route_id=route.route_id,
+                route=route,
                 runtime_refs=runtime_refs,
-                metadata={
-                    "route_decision": route.routing_decision,
-                    "task_action": "ask_clarification",
-                },
-            )
-            await self.conversation_refs.record(
-                text_summary=clarification_response,
-                user_session_id=user_session.user_session_id,
-                kernel_session_id=session.kernel_session_id if session else "",
-                role="assistant",
-                source="kernel_route_clarification",
-                route_id=route.route_id,
-                metadata={
-                    "route_decision": route.routing_decision,
-                    "task_action": "ask_clarification",
-                },
             )
             return DispatchDecision(
                 action="respond_from_kernel",
