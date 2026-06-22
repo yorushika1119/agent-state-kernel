@@ -233,8 +233,117 @@ async def test_notification_stream_returns_pending_sse_events():
 
         assert response.status_code == 200
         assert "text/event-stream" in response.headers["content-type"]
+        assert f"id: {notification.notification_id}" in response.text
         assert "event: progress_update" in response.text
         assert notification.notification_id in response.text
+    finally:
+        api_server._store = previous_store
+        api_server._engine = previous_engine
+        api_server._kms_manager = previous_kms_manager
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_notification_stream_filters_target_task_and_pending_status():
+    store, engine, manager = await build_runtime()
+    previous_store = api_server._store
+    previous_engine = api_server._engine
+    previous_kms_manager = api_server._kms_manager
+    api_server._store = store
+    api_server._engine = engine
+    api_server._kms_manager = manager
+
+    try:
+        session = await engine.create_session(agent_id="agent-notify-filter")
+        expected = await store.create_observer_notification(
+            target="observer",
+            kernel_session_id=session.kernel_session_id,
+            task_id="task_keep",
+            notification_type="progress_update",
+            reason="keep me",
+        )
+        other_task = await store.create_observer_notification(
+            target="observer",
+            kernel_session_id=session.kernel_session_id,
+            task_id="task_other",
+            notification_type="progress_update",
+            reason="skip other task",
+        )
+        acked = await store.create_observer_notification(
+            target="observer",
+            kernel_session_id=session.kernel_session_id,
+            task_id="task_keep",
+            notification_type="task_done",
+            reason="skip acked",
+        )
+        await store.ack_observer_notification(acked.notification_id)
+
+        transport = httpx.ASGITransport(app=api_server.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://kernel.test",
+        ) as client:
+            response = await client.get(
+                "/kms/observer/notifications/stream",
+                params={
+                    "kernel_session_id": session.kernel_session_id,
+                    "task_id": "task_keep",
+                },
+            )
+
+        assert response.status_code == 200
+        assert expected.notification_id in response.text
+        assert other_task.notification_id not in response.text
+        assert acked.notification_id not in response.text
+    finally:
+        api_server._store = previous_store
+        api_server._engine = previous_engine
+        api_server._kms_manager = previous_kms_manager
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_talker_notification_stream_only_returns_talker_events():
+    store, engine, manager = await build_runtime()
+    previous_store = api_server._store
+    previous_engine = api_server._engine
+    previous_kms_manager = api_server._kms_manager
+    api_server._store = store
+    api_server._engine = engine
+    api_server._kms_manager = manager
+
+    try:
+        session = await engine.create_session(agent_id="agent-notify-talker-stream")
+        observer = await store.create_observer_notification(
+            target="observer",
+            kernel_session_id=session.kernel_session_id,
+            task_id="task_stream",
+            notification_type="progress_update",
+            reason="observer only",
+        )
+        talker = await store.create_observer_notification(
+            target="talker",
+            kernel_session_id=session.kernel_session_id,
+            task_id="task_stream",
+            notification_type="needs_user_input",
+            reason="talker only",
+        )
+
+        transport = httpx.ASGITransport(app=api_server.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://kernel.test",
+        ) as client:
+            response = await client.get(
+                "/kms/talker/notifications/stream",
+                params={"kernel_session_id": session.kernel_session_id},
+            )
+
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
+        assert f"id: {talker.notification_id}" in response.text
+        assert "event: needs_user_input" in response.text
+        assert observer.notification_id not in response.text
     finally:
         api_server._store = previous_store
         api_server._engine = previous_engine

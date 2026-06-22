@@ -590,7 +590,11 @@ async def _notification_event_stream(
                 continue
             seen.add(notification.notification_id)
             payload = json.dumps(notification.model_dump(), ensure_ascii=False, default=str)
-            yield f"event: {notification.notification_type}\ndata: {payload}\n\n"
+            yield (
+                f"id: {notification.notification_id}\n"
+                f"event: {notification.notification_type}\n"
+                f"data: {payload}\n\n"
+            )
         if once:
             break
         await asyncio.sleep(max(poll_interval, 0.1))
