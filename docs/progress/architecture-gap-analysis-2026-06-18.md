@@ -1742,3 +1742,33 @@ python scripts\test_integration.py
 - 默认不写旧表后，重集成链路仍然通过。
 - 旧表现在主要承担历史数据 fallback，而不是新数据写入职责。
 - 下一步可以继续观察真实 smoke，之后再评估是否移除旧表双写代码本身。
+
+### 默认不写旧表的真实 smoke
+
+本次不设置任何 `KMS_WRITE_LEGACY_STATE_TABLES` 环境变量，直接使用当前默认策略运行真实链路。
+
+真实 Router smoke：
+
+```text
+python scripts\live_llm_router_smoke.py
+FINAL_DECISION=select_existing
+OTHER_STATUS_ACTION=respond_from_kernel
+OTHER_STATUS_REQUIRES_THINKER=False
+EXPLICIT_NEW_TASK_ACTION=start_new_task
+```
+
+真实 Hermes interrupt smoke：
+
+```text
+python scripts\live_interrupt_demo.py --real-model --scenario interrupt
+ARCHITECTURE_GLOSSARY_CHECK: passed
+old dispatch=failed
+new dispatch=completed
+active_run=empty
+```
+
+结论：
+
+- 默认不写旧表后，真实 LLM Router 链路通过。
+- 默认不写旧表后，真实 Hermes Gateway/Thinker interrupt 链路通过。
+- 可以进入下一阶段：移除旧表写入代码本身，但继续保留旧表读取 fallback。
