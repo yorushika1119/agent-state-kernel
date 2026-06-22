@@ -23,15 +23,20 @@ FAST_TESTS = [
     "tests/test_state_primary_read_switch.py",
     "tests/test_legacy_state_migration.py",
     "tests/test_task_conversation_refs.py",
+    "tests/test_test_tiers.py",
 ]
 
 CORE_TESTS = [
     *FAST_TESTS,
     "tests/test_task_directory_router.py",
-    "tests/test_pipeline_event_flow.py",
     "tests/test_manager_observer_views.py",
     "tests/test_state_alias_and_thinker_dispatch.py",
     "tests/test_observer_notifications.py",
+]
+
+INTEGRATION_TESTS = [
+    *CORE_TESTS,
+    "tests/test_pipeline_event_flow.py",
     "tests/test_requested_user_scenarios.py",
     "tests/test_smoke_interrupt.py",
     "tests/test_architecture_ab_experiment.py",
@@ -40,6 +45,7 @@ CORE_TESTS = [
 TIER_TESTS = {
     "fast": FAST_TESTS,
     "core": CORE_TESTS,
+    "integration": INTEGRATION_TESTS,
     "full": [],
 }
 

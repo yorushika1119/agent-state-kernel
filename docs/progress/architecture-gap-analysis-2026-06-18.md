@@ -1604,3 +1604,25 @@ python scripts\test_core.py
 python scripts\test_full.py
 117 passed in 154.26s
 ```
+
+### 测试分层修正
+
+第一次分层后，`core` 和 `full` 的耗时过于接近，说明 `core` 划得太宽。
+
+本次调整：
+
+- 新增 `scripts/test_integration.py`。
+- 将重集成测试移入 `integration`：
+  - `test_pipeline_event_flow.py`
+  - `test_requested_user_scenarios.py`
+  - `test_smoke_interrupt.py`
+  - `test_architecture_ab_experiment.py`
+- `core` 保留 fast + 普通核心集成测试。
+- `tests/test_test_tiers.py` 加入 fast，保证分层脚本自身会被快速验证。
+
+按要求本次只重跑 core：
+
+```text
+python scripts\test_core.py
+74 passed in 52.60s
+```

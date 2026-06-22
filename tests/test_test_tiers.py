@@ -9,7 +9,7 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from test_tiers import CORE_TESTS, FAST_TESTS, PYTEST_BASE_ARGS, TIER_TESTS
+from test_tiers import CORE_TESTS, FAST_TESTS, INTEGRATION_TESTS, PYTEST_BASE_ARGS, TIER_TESTS
 
 
 def test_test_tier_paths_exist():
@@ -23,6 +23,10 @@ def test_test_tier_paths_exist():
 
 def test_core_tier_includes_fast_tier():
     assert set(FAST_TESTS).issubset(set(CORE_TESTS))
+
+
+def test_integration_tier_includes_core_tier():
+    assert set(CORE_TESTS).issubset(set(INTEGRATION_TESTS))
 
 
 def test_tier_runner_clears_project_pytest_addopts():
