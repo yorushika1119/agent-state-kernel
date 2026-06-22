@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -74,6 +75,8 @@ from src.utils.time import utc_from_iso, utc_now, utc_now_iso
 
 logger = logging.getLogger(__name__)
 
+LEGACY_WRITE_DISABLED_VALUES = {"0", "false", "no", "off"}
+
 
 class SqliteStore:
     """基于 SQLite 的 Kernel 状态存储。
@@ -85,6 +88,10 @@ class SqliteStore:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.conn: Optional[aiosqlite.Connection] = None
+
+    def _write_legacy_state_tables(self) -> bool:
+        value = os.getenv("KMS_WRITE_LEGACY_STATE_TABLES", "1")
+        return value.strip().lower() not in LEGACY_WRITE_DISABLED_VALUES
 
     # ==================================================================
     # 连接管理
@@ -1025,6 +1032,8 @@ class SqliteStore:
                 cancelled=intent.cancelled,
             )
         )
+        if not self._write_legacy_state_tables():
+            return
         await self.conn.execute(
             """INSERT OR REPLACE INTO intent_states
                (kernel_session_id, intent_version, goal, constraints,
@@ -1096,6 +1105,8 @@ class SqliteStore:
                 execution_summary=await self._build_execution_summary(session_id),
             )
         )
+        if not self._write_legacy_state_tables():
+            return
         await self.conn.execute(
             """INSERT OR REPLACE INTO plan_states
                (kernel_session_id, plan_id, status, current_step, steps,
@@ -2000,6 +2011,8 @@ class SqliteStore:
                 last_verified_at=belief.last_verified_at,
             )
         )
+        if not self._write_legacy_state_tables():
+            return
         await self.conn.execute(
             """INSERT OR REPLACE INTO belief_items
                (belief_id, kernel_session_id, claim, status, confidence,
@@ -2194,6 +2207,8 @@ class SqliteStore:
                 resolved_at=commitment.resolved_at,
             )
         )
+        if not self._write_legacy_state_tables():
+            return
         await self.conn.execute(
             """INSERT OR REPLACE INTO commitments
                (commitment_id, kernel_session_id, statement, created_by,

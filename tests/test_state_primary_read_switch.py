@@ -33,6 +33,14 @@ async def build_runtime():
     return store, engine
 
 
+async def count_rows(store: SqliteStore, table: str, session_id: str) -> int:
+    rows = await store.conn.execute_fetchall(
+        f"SELECT COUNT(*) AS count FROM {table} WHERE kernel_session_id = ?",
+        (session_id,),
+    )
+    return rows[0]["count"]
+
+
 @pytest.mark.asyncio
 async def test_legacy_getters_prefer_task_first_state_when_both_exist():
     store, engine = await build_runtime()
@@ -170,6 +178,80 @@ async def test_legacy_getters_prefer_task_first_state_when_both_exist():
         manager_view = await engine.get_manager_view(session.kernel_session_id)
         assert manager_view["legacy_debug"]["intent"]["goal"] == "new goal"
     finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_can_disable_legacy_state_table_writes(monkeypatch):
+    monkeypatch.setenv("KMS_WRITE_LEGACY_STATE_TABLES", "0")
+    store, engine = await build_runtime()
+    try:
+        session = await engine.create_session(agent_id="agent-no-legacy-write")
+        task = await store.create_task(
+            session.kernel_session_id,
+            title="new only",
+            goal="new only",
+        )
+        await store.update_session_status(
+            session.kernel_session_id,
+            session.status.value,
+            active_task_id=task.task_id,
+        )
+
+        await store.save_intent(
+            session.kernel_session_id,
+            IntentState(intent_version=7, goal="new table only"),
+        )
+        await store.save_plan(
+            session.kernel_session_id,
+            PlanState(
+                plan_id="plan_new_only",
+                status=PlanStatus.ACTIVE,
+                current_step="s1",
+                steps=[
+                    PlanStep(
+                        step_id="s1",
+                        name="write new tables",
+                        status=StepStatus.RUNNING,
+                    )
+                ],
+                intent_version=7,
+            ),
+        )
+        await store.save_belief(
+            session.kernel_session_id,
+            BeliefItem(
+                belief_id="claim_new_only",
+                claim="new table claim",
+                status=BeliefStatus.VERIFIED,
+                confidence=0.9,
+            ),
+        )
+        await store.save_commitment(
+            session.kernel_session_id,
+            Commitment(
+                commitment_id="todo_new_only",
+                statement="new table todo",
+                status=CommitmentStatus.PENDING,
+            ),
+        )
+
+        assert await count_rows(store, "task_brief_states", session.kernel_session_id) == 1
+        assert await count_rows(store, "task_flows", session.kernel_session_id) == 1
+        assert await count_rows(store, "claim_items", session.kernel_session_id) == 1
+        assert await count_rows(store, "todo_obligations", session.kernel_session_id) == 1
+        assert await count_rows(store, "intent_states", session.kernel_session_id) == 0
+        assert await count_rows(store, "plan_states", session.kernel_session_id) == 0
+        assert await count_rows(store, "belief_items", session.kernel_session_id) == 0
+        assert await count_rows(store, "commitments", session.kernel_session_id) == 0
+
+        thinker_view = await engine.get_thinker_view(session.kernel_session_id)
+        assert thinker_view["task_brief"]["goal"] == "new table only"
+        assert thinker_view["task_flow"]["flow_id"] == "plan_new_only"
+        assert thinker_view["claims"][0]["claim"] == "new table claim"
+        assert thinker_view["todos"][0]["statement"] == "new table todo"
+    finally:
+        monkeypatch.delenv("KMS_WRITE_LEGACY_STATE_TABLES", raising=False)
         await store.close()
 
 

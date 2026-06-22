@@ -1626,3 +1626,57 @@ python scripts\test_full.py
 python scripts\test_core.py
 74 passed in 52.60s
 ```
+
+## 2026-06-22：旧状态表写入开关
+
+本阶段开始做旧表只读实验的第一步：新增开关，允许测试环境停止写旧状态表。
+
+新增环境变量：
+
+```text
+KMS_WRITE_LEGACY_STATE_TABLES=0
+```
+
+行为：
+
+- 默认不设置时仍然双写旧表，兼容现有数据和调用方。
+- 设置为 `0/false/no/off` 时：
+  - `save_intent()` 只写 `task_brief_states`，不写 `intent_states`；
+  - `save_plan()` 只写 `task_flows`，不写 `plan_states`；
+  - `save_belief()` 只写 `claim_items`，不写 `belief_items`；
+  - `save_commitment()` 只写 `todo_obligations`，不写 `commitments`。
+
+新增测试：
+
+```text
+tests/test_state_primary_read_switch.py::test_can_disable_legacy_state_table_writes
+```
+
+验证内容：
+
+- 关闭旧表写入后，新表仍正常写入；
+- 旧表不再产生新行；
+- `thinker_view` 仍能从新表输出 `task_brief/task_flow/claims/todos`。
+
+验证结果：
+
+```text
+python -m py_compile src\stores\sqlite_store.py
+passed
+
+python -m pytest -o addopts='' -q tests\test_state_primary_read_switch.py tests\test_state_source_audit.py
+8 passed
+
+python scripts\test_core.py
+75 passed in 39.60s
+
+KMS_WRITE_LEGACY_STATE_TABLES=0 python scripts\test_core.py
+75 passed in 36.24s
+```
+
+当前结论：
+
+- 旧表还没有删除，也没有默认停止写入。
+- 但系统已经具备“停止写旧表”的测试开关。
+- core 层已经验证：关闭旧表写入后，核心链路仍能稳定运行。
+- 下一步可以在 integration 层继续用该开关扩大验证范围。
