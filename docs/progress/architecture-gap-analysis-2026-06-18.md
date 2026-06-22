@@ -306,6 +306,13 @@ claimed_at
 completed_at
 ```
 
+2026-06-22 后续状态：
+
+- `thinker_dispatches` 的 claim / heartbeat / complete / fail 已完成。
+- Gateway / CLI / Gateway proxy mode 已接入 dispatch 生命周期。
+- `observer_notifications` 最小表和 Observer / Talker notification API 已完成。
+- 当前还没有独立 notification policy coordinator，通知策略仍是 dispatch complete / fail 的最小触发。
+
 ### 差距 7：同任务 steer 还不是真正的 steer
 
 当前 `same_task_steer` 只是避免走“新任务打断”的部分逻辑，但仍然会创建新 run，并通过 raw message 更新 intent / plan。

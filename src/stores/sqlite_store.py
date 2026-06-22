@@ -1,6 +1,6 @@
 """SQLite 持久化层 — Agent State Kernel 的存储引擎。
 
-管理 20 张表：
+管理 21 张表：
   1. cognitive_events     — 追加事件日志
   2. evidence_items        — 证据条目
   3. belief_items          — 信念条目
@@ -21,6 +21,7 @@
   18. claim_items          — 新版 claim 兼容影子表
   19. todo_obligations     — 新版 todo 兼容影子表
   20. thinker_dispatches   — Thinker 下发队列
+  21. observer_notifications — Observer / Talker 主动通知
 
 所有表通过 kernel_session_id 关联到一个会话。
 事件日志为 append-only——从不更新或删除。
@@ -48,6 +49,8 @@ from src.schema.state import (
     ExecutionAction,
     GlobalTask,
     IntentState,
+    ObserverNotification,
+    ObserverNotificationStatus,
     PlanState,
     PlanStatus,
     ProgressState,
@@ -465,6 +468,27 @@ class SqliteStore:
             )
         """)
 
+        # ─── 21. Observer Notifications ───
+        await self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS observer_notifications (
+                notification_id TEXT PRIMARY KEY,
+                target TEXT DEFAULT 'observer',
+                kernel_session_id TEXT DEFAULT '',
+                task_id TEXT DEFAULT '',
+                notification_type TEXT DEFAULT 'progress_update',
+                urgency TEXT DEFAULT 'normal',
+                reason TEXT DEFAULT '',
+                progress_ref TEXT DEFAULT '',
+                suggested_observer_context TEXT,
+                delivery_policy TEXT,
+                status TEXT DEFAULT 'pending',
+                acknowledged_at TEXT,
+                resolved_at TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        """)
+
         await self._ensure_column("cognitive_events", "run_id", "TEXT DEFAULT ''")
         await self._ensure_column("session_links", "active_run_id", "TEXT DEFAULT ''")
         await self._ensure_column("session_links", "active_task_id", "TEXT DEFAULT ''")
@@ -498,9 +522,21 @@ class SqliteStore:
         await self._ensure_column("thinker_dispatches", "completed_at", "TEXT")
         await self._ensure_column("thinker_dispatches", "failed_at", "TEXT")
         await self._ensure_column("thinker_dispatches", "error", "TEXT DEFAULT ''")
+        await self._ensure_column("observer_notifications", "target", "TEXT DEFAULT 'observer'")
+        await self._ensure_column("observer_notifications", "kernel_session_id", "TEXT DEFAULT ''")
+        await self._ensure_column("observer_notifications", "task_id", "TEXT DEFAULT ''")
+        await self._ensure_column("observer_notifications", "notification_type", "TEXT DEFAULT 'progress_update'")
+        await self._ensure_column("observer_notifications", "urgency", "TEXT DEFAULT 'normal'")
+        await self._ensure_column("observer_notifications", "reason", "TEXT DEFAULT ''")
+        await self._ensure_column("observer_notifications", "progress_ref", "TEXT DEFAULT ''")
+        await self._ensure_column("observer_notifications", "suggested_observer_context", "TEXT")
+        await self._ensure_column("observer_notifications", "delivery_policy", "TEXT")
+        await self._ensure_column("observer_notifications", "status", "TEXT DEFAULT 'pending'")
+        await self._ensure_column("observer_notifications", "acknowledged_at", "TEXT")
+        await self._ensure_column("observer_notifications", "resolved_at", "TEXT")
 
         await self.conn.commit()
-        logger.info("Tables created (20 tables)")
+        logger.info("Tables created (21 tables)")
 
     async def _ensure_column(self, table_name: str, column_name: str, ddl: str) -> None:
         rows = await self.conn.execute_fetchall(f"PRAGMA table_info({table_name})")
@@ -745,7 +781,7 @@ class SqliteStore:
             "progress_states", "plan_states", "intent_states",
             "task_snapshots", "global_tasks", "task_brief_states",
             "task_flows", "claim_items", "todo_obligations",
-            "thinker_dispatches",
+            "thinker_dispatches", "observer_notifications",
             "belief_items", "evidence_items", "execution_actions",
             "commitments", "sync_cursors", "runtime_refs",
             "cognitive_events", "session_links",
@@ -1526,6 +1562,133 @@ class SqliteStore:
         await self.save_thinker_dispatch(dispatch)
         return await self.get_thinker_dispatch(dispatch_id)
 
+    async def create_observer_notification(
+        self,
+        *,
+        target: str = "observer",
+        kernel_session_id: str = "",
+        task_id: str = "",
+        notification_type: str = "progress_update",
+        urgency: str = "normal",
+        reason: str = "",
+        progress_ref: str = "",
+        suggested_observer_context: Optional[Dict[str, Any]] = None,
+        delivery_policy: Optional[Dict[str, Any]] = None,
+    ) -> ObserverNotification:
+        notification = ObserverNotification(
+            notification_id=f"ntf_{uuid.uuid4().hex[:12]}",
+            target=target,
+            kernel_session_id=kernel_session_id,
+            task_id=task_id,
+            notification_type=notification_type,
+            urgency=urgency,
+            reason=reason,
+            progress_ref=progress_ref,
+            suggested_observer_context=suggested_observer_context or {},
+            delivery_policy=delivery_policy or {},
+        )
+        await self.save_observer_notification(notification)
+        return notification
+
+    async def save_observer_notification(self, notification: ObserverNotification) -> None:
+        existing = await self.get_observer_notification(notification.notification_id)
+        created_at = existing.created_at if existing else notification.created_at
+        await self.conn.execute(
+            """INSERT OR REPLACE INTO observer_notifications
+               (notification_id, target, kernel_session_id, task_id,
+                notification_type, urgency, reason, progress_ref,
+                suggested_observer_context, delivery_policy, status,
+                acknowledged_at, resolved_at, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                notification.notification_id,
+                notification.target,
+                notification.kernel_session_id,
+                notification.task_id,
+                notification.notification_type,
+                notification.urgency,
+                notification.reason,
+                notification.progress_ref,
+                json.dumps(notification.suggested_observer_context, ensure_ascii=False, default=str),
+                json.dumps(notification.delivery_policy, ensure_ascii=False, default=str),
+                notification.status.value,
+                notification.acknowledged_at.isoformat() if notification.acknowledged_at else None,
+                notification.resolved_at.isoformat() if notification.resolved_at else None,
+                created_at.isoformat() if created_at else utc_now_iso(),
+                utc_now_iso(),
+            ),
+        )
+        await self.conn.commit()
+
+    async def get_observer_notification(
+        self,
+        notification_id: str,
+    ) -> Optional[ObserverNotification]:
+        if not notification_id:
+            return None
+        rows = await self.conn.execute_fetchall(
+            "SELECT * FROM observer_notifications WHERE notification_id = ?",
+            (notification_id,),
+        )
+        if not rows:
+            return None
+        return self._row_to_observer_notification(rows[0])
+
+    async def list_observer_notifications(
+        self,
+        *,
+        target: str = "",
+        kernel_session_id: str = "",
+        task_id: str = "",
+        status: str = "",
+        limit: int = 50,
+    ) -> List[ObserverNotification]:
+        query = "SELECT * FROM observer_notifications"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if target:
+            clauses.append("target = ?")
+            params.append(target)
+        if kernel_session_id:
+            clauses.append("kernel_session_id = ?")
+            params.append(kernel_session_id)
+        if task_id:
+            clauses.append("task_id = ?")
+            params.append(task_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at ASC LIMIT ?"
+        params.append(limit)
+        rows = await self.conn.execute_fetchall(query, params)
+        return [self._row_to_observer_notification(row) for row in rows]
+
+    async def ack_observer_notification(
+        self,
+        notification_id: str,
+    ) -> Optional[ObserverNotification]:
+        notification = await self.get_observer_notification(notification_id)
+        if not notification:
+            return None
+        notification.status = ObserverNotificationStatus.ACKNOWLEDGED
+        notification.acknowledged_at = utc_now()
+        await self.save_observer_notification(notification)
+        return await self.get_observer_notification(notification_id)
+
+    async def resolve_observer_notification(
+        self,
+        notification_id: str,
+    ) -> Optional[ObserverNotification]:
+        notification = await self.get_observer_notification(notification_id)
+        if not notification:
+            return None
+        notification.status = ObserverNotificationStatus.RESOLVED
+        notification.resolved_at = utc_now()
+        await self.save_observer_notification(notification)
+        return await self.get_observer_notification(notification_id)
+
     async def get_evidence(self, session_id: str) -> List[EvidenceItem]:
         """获取所有证据条目。"""
         rows = await self.conn.execute_fetchall(
@@ -1990,6 +2153,27 @@ class SqliteStore:
             completed_at=utc_from_iso(row["completed_at"]) if row["completed_at"] else None,
             failed_at=utc_from_iso(row["failed_at"]) if row["failed_at"] else None,
             error=row["error"] or "",
+            created_at=utc_from_iso(row["created_at"]) if row["created_at"] else utc_now(),
+            updated_at=utc_from_iso(row["updated_at"]) if row["updated_at"] else utc_now(),
+        )
+
+    def _row_to_observer_notification(self, row) -> ObserverNotification:
+        return ObserverNotification(
+            notification_id=row["notification_id"],
+            target=row["target"] or "observer",
+            kernel_session_id=row["kernel_session_id"] or "",
+            task_id=row["task_id"] or "",
+            notification_type=row["notification_type"] or "progress_update",
+            urgency=row["urgency"] or "normal",
+            reason=row["reason"] or "",
+            progress_ref=row["progress_ref"] or "",
+            suggested_observer_context=json.loads(row["suggested_observer_context"] or "{}"),
+            delivery_policy=json.loads(row["delivery_policy"] or "{}"),
+            status=ObserverNotificationStatus(
+                row["status"] or ObserverNotificationStatus.PENDING.value
+            ),
+            acknowledged_at=utc_from_iso(row["acknowledged_at"]) if row["acknowledged_at"] else None,
+            resolved_at=utc_from_iso(row["resolved_at"]) if row["resolved_at"] else None,
             created_at=utc_from_iso(row["created_at"]) if row["created_at"] else utc_now(),
             updated_at=utc_from_iso(row["updated_at"]) if row["updated_at"] else utc_now(),
         )

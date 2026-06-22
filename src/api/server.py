@@ -102,6 +102,34 @@ class FailThinkerDispatchRequest(BaseModel):
     session_status: str = "failed"
 
 
+async def _create_dispatch_notification(
+    engine: KernelEngine,
+    dispatch,
+    *,
+    notification_type: str,
+    urgency: str,
+    reason: str,
+) -> None:
+    await engine.store.create_observer_notification(
+        target="observer",
+        kernel_session_id=dispatch.kernel_session_id,
+        task_id=dispatch.task_id,
+        notification_type=notification_type,
+        urgency=urgency,
+        reason=reason,
+        progress_ref=dispatch.run_id,
+        suggested_observer_context={
+            "dispatch_id": dispatch.dispatch_id,
+            "run_id": dispatch.run_id,
+            "task_id": dispatch.task_id,
+        },
+        delivery_policy={
+            "dedupe_key": f"{dispatch.task_id or dispatch.kernel_session_id}:{notification_type}",
+            "requires_user_visible_message": notification_type in {"task_failed", "task_done"},
+        },
+    )
+
+
 class AskCanSayRequest(BaseModel):
     """Gate 发言检查请求。"""
     session_id: str
@@ -452,13 +480,22 @@ async def complete_thinker_dispatch(dispatch_id: str, req: CompleteThinkerDispat
     dispatch = await engine.store.get_thinker_dispatch(dispatch_id)
     if not dispatch:
         raise HTTPException(status_code=404, detail="Thinker dispatch not found")
+    completed_run = False
     if dispatch.run_id:
-        await engine.complete_run(
+        completed_run = await engine.complete_run(
             dispatch.kernel_session_id,
             dispatch.run_id,
             session_status=req.session_status,
         )
     updated = await engine.store.complete_thinker_dispatch(dispatch_id)
+    if completed_run:
+        await _create_dispatch_notification(
+            engine,
+            dispatch,
+            notification_type="task_done" if req.session_status == "completed" else "progress_update",
+            urgency="normal",
+            reason="thinker_dispatch_completed",
+        )
     return updated.model_dump()
 
 
@@ -468,14 +505,110 @@ async def fail_thinker_dispatch(dispatch_id: str, req: FailThinkerDispatchReques
     dispatch = await engine.store.get_thinker_dispatch(dispatch_id)
     if not dispatch:
         raise HTTPException(status_code=404, detail="Thinker dispatch not found")
+    completed_run = False
     if dispatch.run_id:
-        await engine.complete_run(
+        completed_run = await engine.complete_run(
             dispatch.kernel_session_id,
             dispatch.run_id,
             session_status=req.session_status,
         )
     updated = await engine.store.fail_thinker_dispatch(dispatch_id, error=req.error)
+    if completed_run:
+        await _create_dispatch_notification(
+            engine,
+            dispatch,
+            notification_type="task_failed",
+            urgency="important",
+            reason=req.error or "thinker_dispatch_failed",
+        )
     return updated.model_dump()
+
+
+async def _list_notifications(
+    *,
+    target: str,
+    kernel_session_id: str = "",
+    task_id: str = "",
+    status: str = "pending",
+    limit: int = 50,
+):
+    engine = get_engine()
+    notifications = await engine.store.list_observer_notifications(
+        target=target,
+        kernel_session_id=kernel_session_id,
+        task_id=task_id,
+        status=status,
+        limit=limit,
+    )
+    return [notification.model_dump() for notification in notifications]
+
+
+async def _ack_notification(notification_id: str):
+    engine = get_engine()
+    notification = await engine.store.ack_observer_notification(notification_id)
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return notification.model_dump()
+
+
+async def _resolve_notification(notification_id: str):
+    engine = get_engine()
+    notification = await engine.store.resolve_observer_notification(notification_id)
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return notification.model_dump()
+
+
+@app.get("/kms/observer/notifications")
+async def list_observer_notifications(
+    kernel_session_id: str = "",
+    task_id: str = "",
+    status: str = "pending",
+    limit: int = 50,
+):
+    return await _list_notifications(
+        target="observer",
+        kernel_session_id=kernel_session_id,
+        task_id=task_id,
+        status=status,
+        limit=limit,
+    )
+
+
+@app.post("/kms/observer/notifications/{notification_id}/ack")
+async def ack_observer_notification(notification_id: str):
+    return await _ack_notification(notification_id)
+
+
+@app.post("/kms/observer/notifications/{notification_id}/resolve")
+async def resolve_observer_notification(notification_id: str):
+    return await _resolve_notification(notification_id)
+
+
+@app.get("/kms/talker/notifications")
+async def list_talker_notifications(
+    kernel_session_id: str = "",
+    task_id: str = "",
+    status: str = "pending",
+    limit: int = 50,
+):
+    return await _list_notifications(
+        target="talker",
+        kernel_session_id=kernel_session_id,
+        task_id=task_id,
+        status=status,
+        limit=limit,
+    )
+
+
+@app.post("/kms/talker/notifications/{notification_id}/ack")
+async def ack_talker_notification(notification_id: str):
+    return await _ack_notification(notification_id)
+
+
+@app.post("/kms/talker/notifications/{notification_id}/resolve")
+async def resolve_talker_notification(notification_id: str):
+    return await _resolve_notification(notification_id)
 
 
 @app.get("/kernel/sessions/{session_id}/events")

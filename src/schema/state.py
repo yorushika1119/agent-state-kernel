@@ -351,6 +351,32 @@ class ThinkerDispatch(BaseModel):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class ObserverNotificationStatus(StrEnum):
+    PENDING = "pending"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
+
+
+class ObserverNotification(BaseModel):
+    """Notification for Observer / Talker to refresh or report task state."""
+
+    notification_id: str
+    target: str = "observer"
+    kernel_session_id: str = ""
+    task_id: str = ""
+    notification_type: str = "progress_update"
+    urgency: str = "normal"
+    reason: str = ""
+    progress_ref: str = ""
+    suggested_observer_context: Dict[str, Any] = Field(default_factory=dict)
+    delivery_policy: Dict[str, Any] = Field(default_factory=dict)
+    status: ObserverNotificationStatus = ObserverNotificationStatus.PENDING
+    acknowledged_at: Optional[datetime] = None
+    resolved_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 # ---------------------------------------------------------------------------
 # Commitment
 # ---------------------------------------------------------------------------
