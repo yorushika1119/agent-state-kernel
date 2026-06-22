@@ -118,6 +118,57 @@ async def test_complete_dispatch_can_record_assistant_conversation_ref():
 
 
 @pytest.mark.asyncio
+async def test_external_talker_reply_can_record_conversation_ref():
+    store, engine, manager = await build_runtime()
+    previous_store = api_server._store
+    previous_engine = api_server._engine
+    previous_kms_manager = api_server._kms_manager
+    api_server._store = store
+    api_server._engine = engine
+    api_server._kms_manager = manager
+    try:
+        session = await engine.create_session(agent_id="agent-external-reply")
+        task = await store.create_task(
+            session.kernel_session_id,
+            title="外部回复归档",
+            goal="验证外部回复归档",
+        )
+
+        transport = httpx.ASGITransport(app=api_server.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://kernel.test",
+        ) as client:
+            response = await client.post(
+                "/kms/conversation-refs",
+                json={
+                    "kernel_session_id": session.kernel_session_id,
+                    "task_id": task.task_id,
+                    "role": "talker",
+                    "source": "external_talker_reply",
+                    "message_ref_id": "msg_talker_final",
+                    "text_summary": "已经把当前进度告诉用户。",
+                },
+            )
+
+        refs = await store.list_task_conversation_refs(
+            kernel_session_id=session.kernel_session_id,
+            task_id=task.task_id,
+            role="talker",
+        )
+
+        assert response.status_code == 200
+        assert refs[0].source == "external_talker_reply"
+        assert refs[0].message_ref_id == "msg_talker_final"
+        assert refs[0].text_summary == "已经把当前进度告诉用户。"
+    finally:
+        api_server._store = previous_store
+        api_server._engine = previous_engine
+        api_server._kms_manager = previous_kms_manager
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_task_router_uses_recent_task_conversation_refs_as_hints():
     store, engine, manager = await build_runtime()
     try:

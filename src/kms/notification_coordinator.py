@@ -5,6 +5,14 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from src.schema.state import ObserverNotification
+from src.utils.time import utc_now
+
+
+MIN_INTERVAL_SECONDS = {
+    "progress_update": 300,
+    "task_done": 0,
+    "task_failed": 0,
+}
 
 
 class NotificationCoordinator:
@@ -58,6 +66,15 @@ class NotificationCoordinator:
         urgency: str,
         reason: str,
     ) -> ObserverNotification:
+        dedupe_key = f"{dispatch.task_id or dispatch.kernel_session_id}:{notification_type}"
+        min_interval_seconds = MIN_INTERVAL_SECONDS.get(notification_type, 0)
+        existing = await self._find_existing_notification(
+            dispatch,
+            dedupe_key=dedupe_key,
+            min_interval_seconds=min_interval_seconds,
+        )
+        if existing:
+            return existing
         return await self.store.create_observer_notification(
             target="observer",
             kernel_session_id=dispatch.kernel_session_id,
@@ -72,8 +89,38 @@ class NotificationCoordinator:
                 "task_id": dispatch.task_id,
             },
             delivery_policy={
-                "dedupe_key": f"{dispatch.task_id or dispatch.kernel_session_id}:{notification_type}",
+                "dedupe_key": dedupe_key,
+                "min_interval_seconds": min_interval_seconds,
                 "requires_user_visible_message": notification_type
                 in {"task_failed", "task_done"},
+                "silent_update": urgency == "silent",
             },
         )
+
+    async def _find_existing_notification(
+        self,
+        dispatch: Any,
+        *,
+        dedupe_key: str,
+        min_interval_seconds: int,
+    ) -> Optional[ObserverNotification]:
+        notifications = await self.store.list_observer_notifications(
+            target="observer",
+            kernel_session_id=dispatch.kernel_session_id,
+            task_id=dispatch.task_id,
+            status="",
+            limit=100,
+        )
+        now = utc_now()
+        for notification in notifications:
+            if notification.delivery_policy.get("dedupe_key") != dedupe_key:
+                continue
+            if notification.status.value == "pending":
+                return notification
+            if (
+                min_interval_seconds > 0
+                and notification.created_at
+                and (now - notification.created_at).total_seconds() < min_interval_seconds
+            ):
+                return notification
+        return None

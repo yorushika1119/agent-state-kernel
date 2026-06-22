@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -19,9 +20,10 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
 from src.kms.manager import KmsManager
 from src.kms.notification_coordinator import NotificationCoordinator
 from src.kernel.engine import KernelEngine
@@ -106,41 +108,18 @@ class FailThinkerDispatchRequest(BaseModel):
     session_status: str = "failed"
 
 
-def _message_ref_id(runtime_refs: Optional[dict]) -> str:
-    runtime_refs = runtime_refs or {}
-    return (
-        runtime_refs.get("message_id")
-        or runtime_refs.get("message_ref_id")
-        or runtime_refs.get("ref_id")
-        or ""
-    )
-
-
-async def _create_dispatch_conversation_ref(
-    engine: KernelEngine,
-    dispatch,
-    *,
-    role: str,
-    source: str,
-    text_summary: str = "",
-    runtime_refs: Optional[dict] = None,
-    metadata: Optional[dict] = None,
-) -> None:
-    message_ref_id = _message_ref_id(runtime_refs)
-    if not text_summary.strip() and not message_ref_id:
-        return
-    global_task = await engine.store.get_global_task(dispatch.task_id)
-    await engine.store.create_task_conversation_ref(
-        user_session_id=global_task.user_session_id if global_task else "",
-        kernel_session_id=dispatch.kernel_session_id,
-        task_id=dispatch.task_id,
-        run_id=dispatch.run_id,
-        role=role,
-        source=source,
-        message_ref_id=message_ref_id,
-        text_summary=text_summary.strip(),
-        metadata=metadata or {},
-    )
+class RecordConversationRefRequest(BaseModel):
+    user_session_id: str = ""
+    kernel_session_id: str = ""
+    task_id: str = ""
+    run_id: str = ""
+    role: str = "assistant"
+    source: str = "external_reply"
+    message_ref_id: str = ""
+    text_summary: str = ""
+    route_id: str = ""
+    runtime_refs: Optional[dict] = None
+    metadata: dict = Field(default_factory=dict)
 
 
 class AskCanSayRequest(BaseModel):
@@ -450,6 +429,27 @@ async def complete_run(req: CompleteRunRequest):
     return {"ok": True}
 
 
+@app.post("/kms/conversation-refs")
+async def record_conversation_ref(req: RecordConversationRefRequest):
+    engine = get_engine()
+    ref = await ConversationRefCoordinator(engine.store).record(
+        user_session_id=req.user_session_id,
+        kernel_session_id=req.kernel_session_id,
+        task_id=req.task_id,
+        run_id=req.run_id,
+        role=req.role,
+        source=req.source,
+        message_ref_id=req.message_ref_id,
+        text_summary=req.text_summary,
+        route_id=req.route_id,
+        runtime_refs=req.runtime_refs,
+        metadata=req.metadata,
+    )
+    if not ref:
+        raise HTTPException(status_code=400, detail="Missing text_summary or message ref")
+    return ref.model_dump()
+
+
 @app.get("/kms/thinker/dispatches")
 async def list_thinker_dispatches(
     kernel_session_id: str = "",
@@ -508,8 +508,8 @@ async def complete_thinker_dispatch(dispatch_id: str, req: CompleteThinkerDispat
         session_status=req.session_status,
         active_run_completed=completed_run,
     )
-    await _create_dispatch_conversation_ref(
-        engine,
+    conversation_refs = ConversationRefCoordinator(engine.store)
+    await conversation_refs.record_dispatch_completion(
         dispatch,
         role="assistant",
         source="thinker_dispatch_complete",
@@ -565,6 +565,37 @@ async def _list_notifications(
     return [notification.model_dump() for notification in notifications]
 
 
+async def _notification_event_stream(
+    *,
+    target: str,
+    kernel_session_id: str = "",
+    task_id: str = "",
+    status: str = "pending",
+    limit: int = 50,
+    poll_interval: float = 1.0,
+    once: bool = True,
+):
+    engine = get_engine()
+    seen: set[str] = set()
+    while True:
+        notifications = await engine.store.list_observer_notifications(
+            target=target,
+            kernel_session_id=kernel_session_id,
+            task_id=task_id,
+            status=status,
+            limit=limit,
+        )
+        for notification in notifications:
+            if notification.notification_id in seen:
+                continue
+            seen.add(notification.notification_id)
+            payload = json.dumps(notification.model_dump(), ensure_ascii=False, default=str)
+            yield f"event: {notification.notification_type}\ndata: {payload}\n\n"
+        if once:
+            break
+        await asyncio.sleep(max(poll_interval, 0.1))
+
+
 async def _ack_notification(notification_id: str):
     engine = get_engine()
     notification = await engine.store.ack_observer_notification(notification_id)
@@ -597,6 +628,29 @@ async def list_observer_notifications(
     )
 
 
+@app.get("/kms/observer/notifications/stream")
+async def stream_observer_notifications(
+    kernel_session_id: str = "",
+    task_id: str = "",
+    status: str = "pending",
+    limit: int = 50,
+    poll_interval: float = 1.0,
+    once: bool = True,
+):
+    return StreamingResponse(
+        _notification_event_stream(
+            target="observer",
+            kernel_session_id=kernel_session_id,
+            task_id=task_id,
+            status=status,
+            limit=limit,
+            poll_interval=poll_interval,
+            once=once,
+        ),
+        media_type="text/event-stream",
+    )
+
+
 @app.post("/kms/observer/notifications/{notification_id}/ack")
 async def ack_observer_notification(notification_id: str):
     return await _ack_notification(notification_id)
@@ -620,6 +674,29 @@ async def list_talker_notifications(
         task_id=task_id,
         status=status,
         limit=limit,
+    )
+
+
+@app.get("/kms/talker/notifications/stream")
+async def stream_talker_notifications(
+    kernel_session_id: str = "",
+    task_id: str = "",
+    status: str = "pending",
+    limit: int = 50,
+    poll_interval: float = 1.0,
+    once: bool = True,
+):
+    return StreamingResponse(
+        _notification_event_stream(
+            target="talker",
+            kernel_session_id=kernel_session_id,
+            task_id=task_id,
+            status=status,
+            limit=limit,
+            poll_interval=poll_interval,
+            once=once,
+        ),
+        media_type="text/event-stream",
     )
 
 

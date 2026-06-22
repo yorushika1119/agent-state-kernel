@@ -199,3 +199,44 @@ async def test_stale_dispatch_fail_does_not_create_observer_notification():
         api_server._engine = previous_engine
         api_server._kms_manager = previous_kms_manager
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_notification_stream_returns_pending_sse_events():
+    store, engine, manager = await build_runtime()
+    previous_store = api_server._store
+    previous_engine = api_server._engine
+    previous_kms_manager = api_server._kms_manager
+    api_server._store = store
+    api_server._engine = engine
+    api_server._kms_manager = manager
+
+    try:
+        session = await engine.create_session(agent_id="agent-notify-stream")
+        notification = await store.create_observer_notification(
+            target="observer",
+            kernel_session_id=session.kernel_session_id,
+            task_id="task_stream",
+            notification_type="progress_update",
+            reason="stream me",
+        )
+
+        transport = httpx.ASGITransport(app=api_server.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://kernel.test",
+        ) as client:
+            response = await client.get(
+                "/kms/observer/notifications/stream",
+                params={"kernel_session_id": session.kernel_session_id},
+            )
+
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
+        assert "event: progress_update" in response.text
+        assert notification.notification_id in response.text
+    finally:
+        api_server._store = previous_store
+        api_server._engine = previous_engine
+        api_server._kms_manager = previous_kms_manager
+        await store.close()

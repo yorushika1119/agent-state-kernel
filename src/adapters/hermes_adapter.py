@@ -263,6 +263,7 @@ class HermesAdapter:
         mode: str = "auto",
         agent_id: str = "",
         external_task_id: str = "",
+        runtime_refs: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """让 Kernel 决定新消息如何调度。"""
         resp = await self.client.post(
@@ -274,6 +275,7 @@ class HermesAdapter:
                 "mode": mode,
                 "agent_id": agent_id,
                 "external_task_id": external_task_id,
+                "runtime_refs": runtime_refs or {},
             },
         )
         resp.raise_for_status()
@@ -327,6 +329,8 @@ class HermesAdapter:
         dispatch_id: str = "",
         *,
         session_status: str = "completed",
+        response_summary: str = "",
+        runtime_refs: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Mark a thinker dispatch completed and complete its active run."""
         resolved_id = dispatch_id or self.thinker_dispatch_id
@@ -334,7 +338,43 @@ class HermesAdapter:
             raise RuntimeError("No thinker dispatch id")
         resp = await self.client.post(
             f"{self.kernel_url}/kms/thinker/dispatches/{resolved_id}/complete",
-            json={"session_status": session_status},
+            json={
+                "session_status": session_status,
+                "response_summary": response_summary,
+                "runtime_refs": runtime_refs or {},
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def record_conversation_ref(
+        self,
+        *,
+        user_session_id: str = "",
+        task_id: str = "",
+        run_id: str = "",
+        role: str = "assistant",
+        source: str = "hermes_reply",
+        message_ref_id: str = "",
+        text_summary: str = "",
+        runtime_refs: Optional[Dict[str, str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Record a Hermes-owned reply/message ref without storing full transcript."""
+        resp = await self.client.post(
+            f"{self.kernel_url}/kms/conversation-refs",
+            json={
+                "user_session_id": user_session_id,
+                "kernel_session_id": self.session_id or "",
+                "task_id": task_id,
+                "run_id": run_id or self.run_id,
+                "role": role,
+                "source": source,
+                "message_ref_id": message_ref_id,
+                "text_summary": text_summary,
+                "runtime_refs": runtime_refs or {},
+                "metadata": metadata or {},
+            },
         )
         resp.raise_for_status()
         return resp.json()

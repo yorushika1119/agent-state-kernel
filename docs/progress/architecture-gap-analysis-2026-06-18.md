@@ -1211,3 +1211,31 @@ pytest
 - 只覆盖 dispatch complete / fail。
 - 还没有根据 progress diff 自动判断是否通知。
 - 还没有推送通道，Observer / Talker 仍需查询 notification API。
+
+## 2026-06-22：Runtime adapter / notification stream / state switch review
+
+本阶段继续按新架构收敛 runtime 接入和通知层。
+
+核心变化：
+- 新增 `ConversationRefCoordinator`，KmsManager 不再直接构造 conversation ref 落库参数。
+- 新增 `POST /kms/conversation-refs`，支持 Observer / Talker / Runtime 回传外部最终回复摘要和 message id。
+- 新增通用 `RuntimeEventAdapter`，不再只依赖 HermesAdapter。
+- HermesAdapter 补齐 `runtime_refs`、`response_summary` 和 conversation ref 回传方法。
+- 新增 notification SSE：
+  - `GET /kms/observer/notifications/stream`
+  - `GET /kms/talker/notifications/stream`
+- NotificationCoordinator 增加：
+  - `dedupe_key` 去重；
+  - `min_interval_seconds` 节流；
+  - `silent_update` / `requires_user_visible_message` delivery policy。
+
+架构审查：
+- 本阶段没有让 Kernel 保存完整 transcript，仍只保存摘要和 runtime message id。
+- RuntimeEventAdapter 只是协议适配，不接管 runtime session DB、message history 或工具执行。
+- SSE 当前是轻量轮询 stream，不是独立推送 broker。
+
+旧状态表主从切换结论：
+- 暂不切换。
+- 原因是 reducer、progress synthesize、direct responder、打断恢复链路仍依赖旧表作为事实来源。
+- 新表继续作为 task-first 兼容读模型。
+- 后续应逐表切换读取优先级，而不是一次性迁移。

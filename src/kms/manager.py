@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
 from src.kms.dispatch_lifecycle_coordinator import DispatchLifecycleCoordinator
 from src.kms.dispatch_context import build_kernel_dispatch_context
 from src.kms.intent_classifier import classify_dispatch_intent_with_llm
@@ -43,6 +44,7 @@ class KmsManager:
         self.interrupts = InterruptCoordinator(store)
         self.resumes = ResumeCoordinator(store)
         self.lifecycle = DispatchLifecycleCoordinator(store, engine)
+        self.conversation_refs = ConversationRefCoordinator(store)
         self.enable_llm_router = (
             os.getenv("KMS_ENABLE_LLM_ROUTER") == "1"
             if enable_llm_router is None
@@ -145,42 +147,6 @@ class KmsManager:
             parts.append(f"{index}. {title}（{status}）")
         return question + "\n" + "\n".join(parts)
 
-    async def _record_task_conversation_ref(
-        self,
-        *,
-        text: str,
-        user_session_id: str,
-        kernel_session_id: str = "",
-        task_id: str = "",
-        run_id: str = "",
-        role: str = "user",
-        source: str = "dispatch_user_message",
-        route_id: str = "",
-        runtime_refs: Optional[dict] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        if not text.strip():
-            return
-        runtime_refs = runtime_refs or {}
-        message_ref_id = (
-            runtime_refs.get("message_id")
-            or runtime_refs.get("message_ref_id")
-            or runtime_refs.get("ref_id")
-            or ""
-        )
-        await self.store.create_task_conversation_ref(
-            user_session_id=user_session_id,
-            kernel_session_id=kernel_session_id,
-            task_id=task_id,
-            run_id=run_id,
-            role=role,
-            source=source,
-            message_ref_id=message_ref_id,
-            text_summary=text.strip(),
-            route_id=route_id,
-            metadata=metadata or {},
-        )
-
     async def dispatch_user_message(
         self,
         *,
@@ -238,8 +204,8 @@ class KmsManager:
 
         if route_clarification_applies:
             clarification_response = self._build_route_clarification_response(route)
-            await self._record_task_conversation_ref(
-                text=text,
+            await self.conversation_refs.record(
+                text_summary=text,
                 user_session_id=user_session.user_session_id,
                 kernel_session_id=session.kernel_session_id if session else "",
                 route_id=route.route_id,
@@ -249,8 +215,8 @@ class KmsManager:
                     "task_action": "ask_clarification",
                 },
             )
-            await self._record_task_conversation_ref(
-                text=clarification_response,
+            await self.conversation_refs.record(
+                text_summary=clarification_response,
                 user_session_id=user_session.user_session_id,
                 kernel_session_id=session.kernel_session_id if session else "",
                 role="assistant",
@@ -287,8 +253,8 @@ class KmsManager:
                 intent.kernel_answer_kind or "progress",
                 target_task_id=response_task_id,
             )
-            await self._record_task_conversation_ref(
-                text=text,
+            await self.conversation_refs.record(
+                text_summary=text,
                 user_session_id=user_session.user_session_id,
                 kernel_session_id=session.kernel_session_id,
                 task_id=response_task_id,
@@ -301,8 +267,8 @@ class KmsManager:
                     "kernel_answer_kind": intent.kernel_answer_kind or "progress",
                 },
             )
-            await self._record_task_conversation_ref(
-                text=kernel_response,
+            await self.conversation_refs.record(
+                text_summary=kernel_response,
                 user_session_id=user_session.user_session_id,
                 kernel_session_id=session.kernel_session_id,
                 task_id=response_task_id,
@@ -444,8 +410,8 @@ class KmsManager:
                 resume_task = await self.store.get_latest_paused_task(session.kernel_session_id)
             if resume_task is None:
                 response_text = "当前没有可继续的已挂起任务。"
-                await self._record_task_conversation_ref(
-                    text=text,
+                await self.conversation_refs.record(
+                    text_summary=text,
                     user_session_id=user_session.user_session_id,
                     kernel_session_id=session.kernel_session_id,
                     task_id=session.active_task_id or "",
@@ -458,8 +424,8 @@ class KmsManager:
                         "reason": "no_paused_task_to_resume",
                     },
                 )
-                await self._record_task_conversation_ref(
-                    text=response_text,
+                await self.conversation_refs.record(
+                    text_summary=response_text,
                     user_session_id=user_session.user_session_id,
                     kernel_session_id=session.kernel_session_id,
                     task_id=session.active_task_id or "",
@@ -601,8 +567,8 @@ class KmsManager:
                     "resume_context": resume_context,
                 },
             )
-            await self._record_task_conversation_ref(
-                text=text,
+            await self.conversation_refs.record(
+                text_summary=text,
                 user_session_id=user_session.user_session_id,
                 kernel_session_id=session.kernel_session_id,
                 task_id=active_task.task_id,
