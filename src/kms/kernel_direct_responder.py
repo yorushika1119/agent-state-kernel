@@ -126,17 +126,17 @@ class KernelDirectResponder:
             )
 
         progress = await self.engine.get_talker_view(session_id)
-        plan = await self.store.get_plan(session_id)
+        flow = await self.store.get_task_flow(session_id)
         if progress is None:
             return "No progress is available yet."
 
         parts: list[str] = []
         if progress.summary:
             parts.append(progress.summary)
-        if plan and plan.current_step:
-            current = next((step for step in plan.steps if step.step_id == plan.current_step), None)
-            if current:
-                parts.append(f"Current step: {current.name}")
+        if flow and flow.current_step:
+            step_name = self._step_name(flow.current_step, flow.steps)
+            if step_name:
+                parts.append(f"Current step: {step_name}")
         if session and session.active_run_id:
             parts.append("thinker is still working on the current task.")
         if not parts:
@@ -153,8 +153,7 @@ class KernelDirectResponder:
         flow = await self._get_task_flow_for_task(session_id, task)
         if active:
             progress = await self.engine.get_talker_view(session_id)
-            plan = await self.store.get_plan(session_id)
-            return self._build_active_task_progress(task, progress, plan, flow)
+            return self._build_active_task_progress(task, progress, flow)
         if flow:
             return self._build_task_flow_progress(task, flow)
         return self._build_task_snapshot_progress(task)
@@ -200,7 +199,6 @@ class KernelDirectResponder:
         self,
         task: TaskSnapshot,
         progress: Any,
-        plan: Any,
         flow: TaskFlowState | None,
     ) -> str:
         parts: list[str] = []
@@ -208,11 +206,7 @@ class KernelDirectResponder:
             parts.append(progress.summary)
 
         step_name = ""
-        if plan and plan.current_step:
-            current = next((step for step in plan.steps if step.step_id == plan.current_step), None)
-            if current:
-                step_name = current.name
-        if not step_name and flow:
+        if flow:
             step_name = self._step_name(flow.current_step, flow.steps)
         if not step_name:
             step_name = task.current_step_name or self._step_name(task.current_step, task.steps)

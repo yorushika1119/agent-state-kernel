@@ -62,6 +62,12 @@ STATE_SOURCE_MAPPINGS = (
     ),
 )
 
+REMAINING_COMPAT_GETTER_FILES = (
+    "src/kernel/engine.py",
+    "src/kms/pipeline.py",
+    "src/stores/sqlite_store.py",
+)
+
 
 class StateSourceAudit:
     """Reports whether task-first state tables are ready to become primary."""
@@ -85,6 +91,7 @@ class StateSourceAudit:
             "can_switch_all": self.can_switch_all(),
             "legacy_direct_sql_frozen": self.legacy_direct_sql_frozen,
             "legacy_tables_removable": False,
+            "remaining_compat_getter_files": list(REMAINING_COMPAT_GETTER_FILES),
             "mappings": [
                 {
                     "new_model": mapping.new_model,

@@ -12,8 +12,8 @@ from src.schema.state import TaskStatus
 @dataclass
 class KernelDispatchContext:
     session: Any = None
-    intent: Any = None
-    plan: Any = None
+    task_brief: Any = None
+    task_flow: Any = None
     progress: Any = None
     tasks: list[Any] = field(default_factory=list)
     evidence: list[Any] = field(default_factory=list)
@@ -82,9 +82,9 @@ async def build_kernel_dispatch_context(store, session: Any = None) -> KernelDis
         return KernelDispatchContext()
 
     session_id = session.kernel_session_id
-    intent, plan, progress, tasks, evidence, executions = await asyncio.gather(
-        store.get_intent(session_id),
-        store.get_plan(session_id),
+    task_brief, task_flow, progress, tasks, evidence, executions = await asyncio.gather(
+        store.get_task_brief(session_id),
+        store.get_task_flow(session_id),
         store.get_progress(session_id),
         store.list_tasks(session_id),
         store.get_evidence(session_id),
@@ -92,8 +92,8 @@ async def build_kernel_dispatch_context(store, session: Any = None) -> KernelDis
     )
     return KernelDispatchContext(
         session=session,
-        intent=intent,
-        plan=plan,
+        task_brief=task_brief,
+        task_flow=task_flow,
         progress=progress,
         tasks=tasks,
         evidence=evidence,

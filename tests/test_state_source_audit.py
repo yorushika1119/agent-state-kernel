@@ -20,6 +20,7 @@ def test_state_source_audit_reports_primary_read_switch_complete():
     assert report["can_switch_all"] is True
     assert report["legacy_direct_sql_frozen"] is True
     assert report["legacy_tables_removable"] is False
+    assert "src/kms/pipeline.py" in report["remaining_compat_getter_files"]
     assert {item["new_model"] for item in report["mappings"]} == {
         "task_brief",
         "task_flow",
@@ -85,6 +86,7 @@ async def test_state_source_audit_api_exposes_current_switch_decision():
     assert data["can_switch_all"] is True
     assert data["legacy_direct_sql_frozen"] is True
     assert data["legacy_tables_removable"] is False
+    assert "src/stores/sqlite_store.py" in data["remaining_compat_getter_files"]
     assert {item["shadow_table"] for item in data["mappings"]} == {
         "task_brief_states",
         "task_flows",

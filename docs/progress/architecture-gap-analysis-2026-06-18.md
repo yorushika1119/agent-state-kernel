@@ -1326,3 +1326,31 @@ ARCHITECTURE_GLOSSARY_CHECK: passed
 - 旧表还不能物理删除，因为仍承担兼容输出和历史数据过渡。
 - 本阶段没有做完整历史数据迁移。
 - 下一步应把业务层剩余的兼容 getter 调用逐步替换成新版 getter，然后再评估旧表删除。
+
+## 2026-06-22：架构一致性审查与旧表迁移准备
+
+本阶段按新版架构设计文档做了一次对照审查，并继续推进旧状态表迁移准备。
+
+核心变化：
+- 新增 `docs/progress/architecture-alignment-audit-2026-06-22.md`，逐项对照设计要求和当前实现。
+- `dispatch_context` 改为读取 `task_brief/task_flow`，不再读取旧 `intent/plan` getter。
+- `task_coordinators` 的任务快照、暂停、刷新逻辑改为读取 `task_brief/task_flow`。
+- `kernel_direct_responder` 的进度回复改为读取 `task_flow`。
+- `scripts/live_llm_router_smoke.py` 增加更多真实 router smoke：
+  - LLM 解决模糊任务指代；
+  - “另一个任务当前进度？”直接由 Kernel 回答；
+  - “新任务：...”仍创建新 task。
+- 新增 `scripts/migrate_legacy_state_tables.py`：
+  - 默认 dry-run；
+  - `--write` 才写入；
+  - 不删除旧表；
+  - 支持 intent/plan/belief/commitment 迁移到 task_brief/task_flow/claim/todo。
+- `StateSourceAudit` 新增：
+  - `remaining_compat_getter_files`
+  - 用于明确旧表为什么还不能物理删除。
+
+当前结论：
+- 架构方向和设计文档一致。
+- KMS / Kernel / Thinker 的分层已经基本对齐。
+- 旧表直接 SQL 读取已冻结。
+- 旧表仍不能删除，因为 `pipeline`、`engine`、`sqlite_store` 仍有兼容 getter/双写职责。

@@ -7,6 +7,17 @@ from typing import Any, Optional
 from src.schema.state import TaskSnapshot, TaskStatus
 
 
+def _flow_steps(flow: Any) -> list[dict[str, Any]]:
+    return list(getattr(flow, "steps", []) or [])
+
+
+def _step_name(step_id: str, steps: list[dict[str, Any]]) -> str:
+    for step in steps:
+        if step.get("step_id") == step_id:
+            return str(step.get("name") or "")
+    return ""
+
+
 class InterruptCoordinator:
     def __init__(self, store):
         self.store = store
@@ -24,24 +35,19 @@ class InterruptCoordinator:
         if existing:
             return existing
 
-        intent = await self.store.get_intent(session.kernel_session_id)
-        plan = await self.store.get_plan(session.kernel_session_id)
-        current_step_name = ""
-        step_rows = []
-        if plan:
-            step_rows = [step.model_dump() for step in plan.steps]
-            current = next((step for step in plan.steps if step.step_id == plan.current_step), None)
-            if current:
-                current_step_name = current.name
+        task_brief = await self.store.get_task_brief(session.kernel_session_id)
+        task_flow = await self.store.get_task_flow(session.kernel_session_id)
+        step_rows = _flow_steps(task_flow)
+        current_step = task_flow.current_step if task_flow else ""
 
         task = await self.store.create_task(
             session.kernel_session_id,
-            title=(intent.goal if intent and intent.goal else "")[:80],
-            goal=intent.goal if intent else "",
-            constraints=intent.constraints if intent else [],
-            plan_id=plan.plan_id if plan else "",
-            current_step=plan.current_step if plan else "",
-            current_step_name=current_step_name,
+            title=(task_brief.goal if task_brief and task_brief.goal else "")[:80],
+            goal=task_brief.goal if task_brief else "",
+            constraints=task_brief.constraints if task_brief else [],
+            plan_id=task_flow.flow_id if task_flow else "",
+            current_step=current_step,
+            current_step_name=_step_name(current_step, step_rows),
             steps=step_rows,
             last_run_id=run_id,
         )
@@ -70,23 +76,18 @@ class InterruptCoordinator:
         if task is None:
             return None
 
-        intent = await self.store.get_intent(session.kernel_session_id)
-        plan = await self.store.get_plan(session.kernel_session_id)
+        task_brief = await self.store.get_task_brief(session.kernel_session_id)
+        task_flow = await self.store.get_task_flow(session.kernel_session_id)
         progress = await self.store.get_progress(session.kernel_session_id)
-        current_step_name = ""
-        step_rows = []
-        if plan:
-            step_rows = [step.model_dump() for step in plan.steps]
-            current = next((step for step in plan.steps if step.step_id == plan.current_step), None)
-            if current:
-                current_step_name = current.name
+        step_rows = _flow_steps(task_flow)
+        current_step = task_flow.current_step if task_flow else ""
 
-        task.title = (intent.goal if intent and intent.goal else task.title)[:80]
-        task.goal = intent.goal if intent else task.goal
-        task.constraints = intent.constraints if intent else task.constraints
-        task.plan_id = plan.plan_id if plan else task.plan_id
-        task.current_step = plan.current_step if plan else task.current_step
-        task.current_step_name = current_step_name
+        task.title = (task_brief.goal if task_brief and task_brief.goal else task.title)[:80]
+        task.goal = task_brief.goal if task_brief else task.goal
+        task.constraints = task_brief.constraints if task_brief else task.constraints
+        task.plan_id = task_flow.flow_id if task_flow else task.plan_id
+        task.current_step = current_step if task_flow else task.current_step
+        task.current_step_name = _step_name(current_step, step_rows)
         task.steps = step_rows
         task.last_run_id = session.active_run_id or task.last_run_id
         task.last_interrupted_run_id = interrupted_run_id or task.last_interrupted_run_id
@@ -121,8 +122,10 @@ class ResumeCoordinator:
     async def restore_task_into_session(self, session_id: str, task: TaskSnapshot) -> None:
         from src.schema.state import IntentState, PlanState, PlanStep, PlanStatus, StepStatus
 
-        current_intent = await self.store.get_intent(session_id)
-        next_intent_version = (current_intent.intent_version if current_intent else 0) + 1
+        current_task_brief = await self.store.get_task_brief(session_id)
+        next_intent_version = (
+            current_task_brief.task_brief_version if current_task_brief else 0
+        ) + 1
         await self.store.save_intent(
             session_id,
             IntentState(
@@ -280,23 +283,18 @@ class TaskSwitchCoordinator:
         if active_task is None:
             return None
 
-        intent = await self.store.get_intent(session.kernel_session_id)
-        plan = await self.store.get_plan(session.kernel_session_id)
+        task_brief = await self.store.get_task_brief(session.kernel_session_id)
+        task_flow = await self.store.get_task_flow(session.kernel_session_id)
         progress = await self.store.get_progress(session.kernel_session_id)
 
-        active_task.goal = intent.goal if intent else active_task.goal
-        active_task.constraints = intent.constraints if intent else active_task.constraints
-        active_task.plan_id = plan.plan_id if plan else active_task.plan_id
-        active_task.current_step = plan.current_step if plan else active_task.current_step
+        active_task.goal = task_brief.goal if task_brief else active_task.goal
+        active_task.constraints = task_brief.constraints if task_brief else active_task.constraints
+        active_task.plan_id = task_flow.flow_id if task_flow else active_task.plan_id
+        active_task.current_step = task_flow.current_step if task_flow else active_task.current_step
         active_task.current_step_name = ""
-        if plan and plan.current_step:
-            current = next(
-                (step for step in plan.steps if step.step_id == plan.current_step),
-                None,
-            )
-            if current:
-                active_task.current_step_name = current.name
-            active_task.steps = [step.model_dump() for step in plan.steps]
+        if task_flow and task_flow.current_step:
+            active_task.steps = _flow_steps(task_flow)
+            active_task.current_step_name = _step_name(task_flow.current_step, active_task.steps)
         active_task.last_run_id = run_id
         if progress and progress.summary:
             active_task.resume_summary = progress.summary
