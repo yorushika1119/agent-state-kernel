@@ -248,6 +248,26 @@ class KernelEngine:
             return "interrupted_by_new_request"
         return None
 
+    def _build_legacy_debug(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "note": "Legacy-shaped compatibility aliases. Prefer task_brief/task_flow/claims/todos.",
+            "intent": state["intent"].model_dump() if state["intent"] else None,
+            "plan": state["plan"].model_dump() if state["plan"] else None,
+            "beliefs": [belief.model_dump() for belief in state["beliefs"]],
+            "commitments": [
+                commitment.model_dump() for commitment in state["commitments"]
+            ],
+        }
+
+    def _current_step_from_flow(self, task_flow) -> Optional[Dict[str, Any]]:
+        if not task_flow or not task_flow.current_step:
+            return None
+        for step in task_flow.steps:
+            step_id = step.get("step_id") if isinstance(step, dict) else getattr(step, "step_id", "")
+            if step_id == task_flow.current_step:
+                return step if isinstance(step, dict) else step.model_dump()
+        return None
+
     async def _ensure_progress(self, session_id: str) -> Optional[ProgressState]:
         progress = await self.store.get_progress(session_id)
         if progress:
@@ -300,12 +320,7 @@ class KernelEngine:
 
             progress = await refresh_progress(self.store, session_id)
 
-        current_step = None
-        if plan and plan.current_step:
-            current_step = next(
-                (step for step in plan.steps if step.step_id == plan.current_step),
-                None,
-            )
+        current_step = self._current_step_from_flow(task_flow)
 
         return {
             "session": session.model_dump() if session else None,
@@ -314,7 +329,7 @@ class KernelEngine:
             "plan": plan.model_dump() if plan else None,
             "task_flow": task_flow.model_dump() if task_flow else None,
             "tasks": [task.model_dump() for task in tasks],
-            "current_step": current_step.model_dump() if current_step else None,
+            "current_step": current_step,
             "progress": {
                 "status": progress.status,
                 "stage": progress.stage,
@@ -417,6 +432,7 @@ class KernelEngine:
                 if self._is_thinker_visible(ref.visibility)
             ],
             "risks": self._build_risks(claims, executions, todos),
+            "legacy_debug": self._build_legacy_debug(state),
         }
 
     async def get_observer_view(self, session_id: str) -> Optional[Dict[str, Any]]:
@@ -583,6 +599,7 @@ class KernelEngine:
             "thinker_dispatches": [dispatch.model_dump() for dispatch in dispatches],
             "allowed_actions": progress.allowed_actions if progress else [],
             "forbidden_actions": progress.forbidden_actions if progress else [],
+            "legacy_debug": self._build_legacy_debug(state),
         }
 
     async def get_sync_view(self, session_id: str) -> Optional[SyncView]:
@@ -610,6 +627,7 @@ class KernelEngine:
             "todos": [todo.model_dump() for todo in state["todos"]],
             "thinker_dispatches": [dispatch.model_dump() for dispatch in state["thinker_dispatches"]],
             "runtime_references": [ref.model_dump() for ref in state["runtime_references"]],
+            "legacy_debug": self._build_legacy_debug(state),
         }
 
     async def ask_can_say(

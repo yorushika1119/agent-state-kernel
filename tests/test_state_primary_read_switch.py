@@ -148,6 +148,17 @@ async def test_legacy_getters_prefer_task_first_state_when_both_exist():
         assert beliefs[0].status == BeliefStatus.VERIFIED
         assert commitments[0].statement == "new todo"
         assert commitments[0].requires_confirmation is True
+
+        thinker_view = await engine.get_thinker_view(session.kernel_session_id)
+        assert thinker_view["task_brief"]["goal"] == "new goal"
+        assert thinker_view["task_flow"]["current_step"] == "new_step"
+        assert thinker_view["claims"][0]["claim"] == "new claim"
+        assert thinker_view["todos"][0]["statement"] == "new todo"
+        assert thinker_view["current_step"]["step_id"] == "new_step"
+        assert thinker_view["legacy_debug"]["intent"]["goal"] == "new goal"
+        assert thinker_view["legacy_debug"]["plan"]["current_step"] == "new_step"
+        assert thinker_view["legacy_debug"]["beliefs"][0]["claim"] == "new claim"
+        assert thinker_view["legacy_debug"]["commitments"][0]["statement"] == "new todo"
     finally:
         await store.close()
 

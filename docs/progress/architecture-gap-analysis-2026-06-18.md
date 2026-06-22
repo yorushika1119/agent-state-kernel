@@ -1354,3 +1354,78 @@ ARCHITECTURE_GLOSSARY_CHECK: passed
 - KMS / Kernel / Thinker 的分层已经基本对齐。
 - 旧表直接 SQL 读取已冻结。
 - 旧表仍不能删除，因为 `pipeline`、`engine`、`sqlite_store` 仍有兼容 getter/双写职责。
+
+## 2026-06-22：真实库迁移执行、新表主读继续收敛、legacy debug 输出
+
+本阶段继续按新版架构文档推进状态模型迁移，目标是让系统默认使用 task-first 新表，而不是继续把旧的 `intent/plan/belief/commitment` 当作主模型。
+
+真实 SQLite 库迁移结果：
+
+```text
+DB: data/kernel.db
+backup: data/kernel.db.bak-20260622165335
+
+dry-run:
+sessions=6, migrated=0, dry_run=6, skipped_existing=0, missing_legacy=18
+
+write:
+sessions=6, migrated=6, dry_run=0, skipped_existing=0, missing_legacy=18
+
+post-write dry-run:
+sessions=6, migrated=0, dry_run=0, skipped_existing=6, missing_legacy=18
+```
+
+代码变化：
+
+- `pipeline` 的 reducer 输入改为优先从新版状态对象读取：
+  - `task_brief -> IntentState`
+  - `task_flow -> PlanState`
+  - `claim_items -> BeliefItem`
+  - `todo_obligations -> Commitment`
+- `refresh_progress / gate / sync / validate / arbitrate` 都改为基于新版状态对象转换后的输入。
+- `engine` 输出新增 `legacy_debug` 区，用来集中放旧命名兼容输出。
+- `thinker_view` 的 `current_step` 改为优先从 `task_flow` 计算。
+- 顶层 `intent/plan/beliefs/commitments` 暂时保留为兼容别名，避免一次性破坏现有调用方。
+
+新增/增强验证：
+
+- `tests/test_state_primary_read_switch.py` 增加断言：新表字段是主输出，旧命名输出进入 `legacy_debug`。
+- 真实 Router smoke 验证：
+
+```text
+python scripts\live_llm_router_smoke.py
+FINAL_DECISION=select_existing
+OTHER_STATUS_ACTION=respond_from_kernel
+OTHER_STATUS_REQUIRES_THINKER=False
+EXPLICIT_NEW_TASK_ACTION=start_new_task
+```
+
+- 真实 Hermes 打断 smoke 验证：
+
+```text
+python scripts\live_interrupt_demo.py --real-model --scenario interrupt
+ARCHITECTURE_GLOSSARY_CHECK: passed
+old dispatch: failed
+new dispatch: completed
+active_run cleared
+```
+
+- 全量测试：
+
+```text
+python -m pytest -o addopts='' -q
+113 passed
+```
+
+旧表删除评估：
+
+- 现在仍不建议物理删除旧表。
+- 原因是旧表仍承担兼容输出、旧调用方过渡、历史数据 fallback、双写验证的职责。
+- 当前已经可以说“新表是主读模型”，但还不能说“旧表已经无职责”。
+
+下一步：
+
+1. 继续减少顶层旧字段暴露，让外部调用方改用 `task_brief/task_flow/claims/todos`。
+2. 为旧字段增加 deprecation 文档和迁移检查。
+3. 等旧字段不再被测试和调用方依赖后，再把 `legacy_debug` 也限制到 debug/manager 场景。
+4. 最后才评估删除 `intent_states/plan_states/belief_items/commitments`。

@@ -50,3 +50,21 @@
 | 3 | 把 `engine` 的兼容输出改成新表主输出 + legacy debug 区 |
 | 4 | 增加更多 router smoke：这个任务、另一个、不要打断、继续原来的 |
 | 5 | 再评估是否可物理删除旧表 |
+
+## 2026-06-22 补充审查：状态主读切换推进结果
+
+| 项目 | 当前结果 | 结论 |
+|---|---|---|
+| 真实 SQLite 迁移 | 已备份并执行 `scripts/migrate_legacy_state_tables.py --write`，6 个 session 写入新版状态表 | 已完成一次真实库迁移，不删除旧表 |
+| Pipeline reducer 输入 | 已改为从 `task_brief/task_flow/claim_items/todo_obligations` 转换出 reducer 所需旧形状对象 | 符合“新表主读，旧 reducer 逐步收敛”的过渡策略 |
+| Engine 输出 | 已新增 `legacy_debug`，新版字段继续作为主输出；旧顶层字段暂时保留兼容 | 没有偏离架构，但仍处于兼容期 |
+| Router smoke | 真实 LLM router smoke 通过，模糊任务可由 LLM 选择，状态查询可直接 Kernel 回答 | 方向正确 |
+| Hermes interrupt smoke | 真实 Hermes + DeepSeek 打断 smoke 通过，旧 dispatch failed，新 dispatch completed | 方向正确 |
+| 旧表物理删除 | 暂不删除 | 仍有兼容 getter、双写、历史 fallback 和旧调用方过渡职责 |
+
+最新判断：
+
+- 项目实现逻辑仍然贴合新版架构设计文档。
+- 当前已经从“影子新表”推进到“新表主读 + 旧表兼容输出”。
+- 还没到最终形态，因为旧命名字段仍在 API 视图顶层保留。
+- 后续要把调用方逐步迁到新版字段，再收窄旧字段到 `legacy_debug`，最后评估删旧表。
