@@ -13,9 +13,13 @@ from src.kms.intent_classifier import classify_dispatch_intent_with_llm
 from src.kms.kernel_direct_reply_coordinator import KernelDirectReplyCoordinator
 from src.kms.kernel_direct_responder import KernelDirectResponder
 from src.kms.route_clarification_coordinator import RouteClarificationCoordinator
-from src.kms.task_coordinators import InterruptCoordinator, ResumeCoordinator
+from src.kms.task_coordinators import (
+    InterruptCoordinator,
+    ResumeCoordinator,
+    TaskSwitchCoordinator,
+)
 from src.kms.task_routing_coordinator import TaskRoutingCoordinator
-from src.schema.state import TaskSnapshot, TaskStatus
+from src.schema.state import TaskSnapshot
 
 
 @dataclass
@@ -45,6 +49,11 @@ class KmsManager:
         self.direct_responder = KernelDirectResponder(store, engine)
         self.interrupts = InterruptCoordinator(store)
         self.resumes = ResumeCoordinator(store)
+        self.task_switches = TaskSwitchCoordinator(
+            store,
+            self.interrupts,
+            self.resumes,
+        )
         self.lifecycle = DispatchLifecycleCoordinator(store, engine)
         self.conversation_refs = ConversationRefCoordinator(store)
         self.route_clarifications = RouteClarificationCoordinator(store)
@@ -82,48 +91,10 @@ class KmsManager:
         *,
         run_id: str,
     ) -> Optional[TaskSnapshot]:
-        return await self.interrupts.ensure_active_task_for_session(session, run_id=run_id)
-
-    async def _snapshot_current_task(
-        self,
-        session,
-        *,
-        interrupted_run_id: str = "",
-    ) -> Optional[TaskSnapshot]:
-        return await self.interrupts.snapshot_current_task(
+        return await self.task_switches.ensure_active_task_for_session(
             session,
-            interrupted_run_id=interrupted_run_id,
+            run_id=run_id,
         )
-
-    def _build_resume_context(self, task: Optional[TaskSnapshot]) -> Dict[str, Any]:
-        return self.resumes.build_resume_context(task)
-
-    async def _restore_task_into_session(self, session_id: str, task: TaskSnapshot) -> None:
-        await self.resumes.restore_task_into_session(session_id, task)
-
-    async def _sync_global_task(
-        self,
-        task: Optional[TaskSnapshot],
-        *,
-        user_session_id: str = "",
-        agent_id: str = "",
-        task_brief_version: int = 0,
-        active: bool = True,
-    ) -> None:
-        if task is None:
-            return
-        await self.store.upsert_global_task_from_snapshot(
-            task,
-            user_session_id=user_session_id,
-            agent_id=agent_id,
-            task_brief_version=task_brief_version,
-        )
-        if user_session_id:
-            await self.store.link_task_to_user_session(
-                user_session_id,
-                task.task_id,
-                active=active,
-            )
 
     async def dispatch_user_message(
         self,
@@ -289,26 +260,19 @@ class KmsManager:
             and session.active_task_id != routed_task.task_id
         ):
             if session.active_task_id:
-                paused_task = await self._snapshot_current_task(
+                last_paused_task_id = await self.task_switches.pause_current_task(
                     session,
                     interrupted_run_id=previous_run_id,
-                )
-                await self._sync_global_task(
-                    paused_task,
                     user_session_id=user_session.user_session_id,
                     agent_id=agent_id,
                     task_brief_version=session.intent_version,
-                    active=False,
                 )
-                last_paused_task_id = paused_task.task_id if paused_task else ""
             else:
                 last_paused_task_id = ""
-            await self._restore_task_into_session(session.kernel_session_id, routed_task)
-            routed_task.status = TaskStatus.ACTIVE
-            routed_task.last_run_id = run_id
-            await self.store.save_task(routed_task)
-            await self._sync_global_task(
+            active_task, resume_context = await self.task_switches.activate_existing_task(
+                session,
                 routed_task,
+                run_id=run_id,
                 user_session_id=user_session.user_session_id,
                 agent_id=agent_id,
                 task_brief_version=session.intent_version + 1,
@@ -318,18 +282,15 @@ class KmsManager:
             task_action = "continue_routed_task"
             reason = "route_selected_existing_task"
             should_submit_message = False
-            resume_context = self._build_resume_context(routed_task)
-            active_task = routed_task
         elif session.active_task_id and wants_new_task:
-            paused_task = await self._snapshot_current_task(session, interrupted_run_id=previous_run_id)
-            await self._sync_global_task(
-                paused_task,
+            last_paused_task_id = await self.task_switches.pause_current_task(
+                session,
+                interrupted_run_id=previous_run_id,
                 user_session_id=user_session.user_session_id,
                 agent_id=agent_id,
                 task_brief_version=session.intent_version,
-                active=False,
+                fallback_last_paused_task_id=last_paused_task_id,
             )
-            last_paused_task_id = paused_task.task_id if paused_task else last_paused_task_id
             active_task_id = ""
             action = (
                 "start_new_task"
@@ -343,9 +304,7 @@ class KmsManager:
                 else "reuse_existing_session"
             )
         elif wants_resume:
-            resume_task = await self.store.get_task(session.kernel_session_id, session.last_paused_task_id or "")
-            if resume_task is None:
-                resume_task = await self.store.get_latest_paused_task(session.kernel_session_id)
+            resume_task = await self.task_switches.get_resume_task(session)
             if resume_task is None:
                 response_text = "当前没有可继续的已挂起任务。"
                 await self.direct_replies.record_static_reply(
@@ -375,23 +334,19 @@ class KmsManager:
                     route_decision=route.routing_decision,
                 )
             if session.active_task_id and session.active_task_id != resume_task.task_id:
-                paused_task = await self._snapshot_current_task(session, interrupted_run_id=previous_run_id)
-                await self._sync_global_task(
-                    paused_task,
+                last_paused_task_id = await self.task_switches.pause_current_task(
+                    session,
+                    interrupted_run_id=previous_run_id,
                     user_session_id=user_session.user_session_id,
                     agent_id=agent_id,
                     task_brief_version=session.intent_version,
-                    active=False,
                 )
-                last_paused_task_id = paused_task.task_id if paused_task else ""
             else:
                 last_paused_task_id = ""
-            await self._restore_task_into_session(session.kernel_session_id, resume_task)
-            resume_task.status = TaskStatus.ACTIVE
-            resume_task.last_run_id = run_id
-            await self.store.save_task(resume_task)
-            await self._sync_global_task(
+            active_task, resume_context = await self.task_switches.activate_existing_task(
+                session,
                 resume_task,
+                run_id=run_id,
                 user_session_id=user_session.user_session_id,
                 agent_id=agent_id,
                 task_brief_version=session.intent_version + 1,
@@ -401,18 +356,15 @@ class KmsManager:
             task_action = "continue_paused_task"
             reason = "resume_previous_task"
             should_submit_message = False
-            resume_context = self._build_resume_context(resume_task)
-            active_task = resume_task
         elif previous_run_id and not wants_same_task_steer:
-            paused_task = await self._snapshot_current_task(session, interrupted_run_id=previous_run_id)
-            await self._sync_global_task(
-                paused_task,
+            last_paused_task_id = await self.task_switches.pause_current_task(
+                session,
+                interrupted_run_id=previous_run_id,
                 user_session_id=user_session.user_session_id,
                 agent_id=agent_id,
                 task_brief_version=session.intent_version,
-                active=False,
+                fallback_last_paused_task_id=last_paused_task_id,
             )
-            last_paused_task_id = paused_task.task_id if paused_task else last_paused_task_id
             active_task_id = ""
             task_action = "start_new_task"
 
@@ -449,7 +401,7 @@ class KmsManager:
                 if progress and progress.summary:
                     active_task.resume_summary = progress.summary
                 await self.store.save_task(active_task)
-                await self._sync_global_task(
+                await self.task_switches.sync_global_task(
                     active_task,
                     user_session_id=user_session.user_session_id,
                     agent_id=agent_id,
@@ -464,7 +416,7 @@ class KmsManager:
                 session_status=refreshed.status.value if refreshed else "running",
             )
             refreshed = await self.store.get_session(session.kernel_session_id)
-            await self._sync_global_task(
+            await self.task_switches.sync_global_task(
                 active_task,
                 user_session_id=user_session.user_session_id,
                 agent_id=agent_id,
