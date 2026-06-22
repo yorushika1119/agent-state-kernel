@@ -2,16 +2,60 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from src.schema.state import ObserverNotification
 from src.utils.time import utc_now
 
 
-MIN_INTERVAL_SECONDS = {
-    "progress_update": 300,
-    "task_done": 0,
-    "task_failed": 0,
+@dataclass(frozen=True)
+class NotificationPolicy:
+    urgency: str
+    priority: str
+    min_interval_seconds: int = 0
+    requires_user_visible_message: bool = False
+    silent_update: bool = False
+    interrupt_user: bool = False
+
+
+DEFAULT_NOTIFICATION_POLICY = NotificationPolicy(
+    urgency="normal",
+    priority="normal",
+)
+
+
+NOTIFICATION_POLICIES = {
+    "progress_update": NotificationPolicy(
+        urgency="normal",
+        priority="low",
+        min_interval_seconds=300,
+    ),
+    "task_done": NotificationPolicy(
+        urgency="normal",
+        priority="normal",
+        requires_user_visible_message=True,
+    ),
+    "task_failed": NotificationPolicy(
+        urgency="important",
+        priority="high",
+        requires_user_visible_message=True,
+    ),
+    "needs_user_input": NotificationPolicy(
+        urgency="important",
+        priority="high",
+        requires_user_visible_message=True,
+    ),
+    "task_blocked": NotificationPolicy(
+        urgency="important",
+        priority="high",
+        requires_user_visible_message=True,
+    ),
+    "clarification_needed": NotificationPolicy(
+        urgency="important",
+        priority="high",
+        requires_user_visible_message=True,
+    ),
 }
 
 
@@ -38,7 +82,6 @@ class NotificationCoordinator:
         return await self._create_dispatch_notification(
             dispatch,
             notification_type=notification_type,
-            urgency="normal",
             reason="thinker_dispatch_completed",
         )
 
@@ -54,7 +97,6 @@ class NotificationCoordinator:
         return await self._create_dispatch_notification(
             dispatch,
             notification_type="task_failed",
-            urgency="important",
             reason=error or "thinker_dispatch_failed",
         )
 
@@ -63,15 +105,17 @@ class NotificationCoordinator:
         dispatch: Any,
         *,
         notification_type: str,
-        urgency: str,
         reason: str,
     ) -> ObserverNotification:
+        policy = NOTIFICATION_POLICIES.get(
+            notification_type,
+            DEFAULT_NOTIFICATION_POLICY,
+        )
         dedupe_key = f"{dispatch.task_id or dispatch.kernel_session_id}:{notification_type}"
-        min_interval_seconds = MIN_INTERVAL_SECONDS.get(notification_type, 0)
         existing = await self._find_existing_notification(
             dispatch,
             dedupe_key=dedupe_key,
-            min_interval_seconds=min_interval_seconds,
+            min_interval_seconds=policy.min_interval_seconds,
         )
         if existing:
             return existing
@@ -80,7 +124,7 @@ class NotificationCoordinator:
             kernel_session_id=dispatch.kernel_session_id,
             task_id=dispatch.task_id,
             notification_type=notification_type,
-            urgency=urgency,
+            urgency=policy.urgency,
             reason=reason,
             progress_ref=dispatch.run_id,
             suggested_observer_context={
@@ -90,10 +134,11 @@ class NotificationCoordinator:
             },
             delivery_policy={
                 "dedupe_key": dedupe_key,
-                "min_interval_seconds": min_interval_seconds,
-                "requires_user_visible_message": notification_type
-                in {"task_failed", "task_done"},
-                "silent_update": urgency == "silent",
+                "priority": policy.priority,
+                "min_interval_seconds": policy.min_interval_seconds,
+                "requires_user_visible_message": policy.requires_user_visible_message,
+                "silent_update": policy.silent_update,
+                "interrupt_user": policy.interrupt_user,
             },
         )
 

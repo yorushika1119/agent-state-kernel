@@ -37,7 +37,9 @@ async def test_notification_coordinator_creates_task_done_notification():
         assert notification.urgency == "normal"
         assert notification.progress_ref == "run_notify_done"
         assert notification.suggested_observer_context["dispatch_id"] == dispatch.dispatch_id
+        assert notification.delivery_policy["priority"] == "normal"
         assert notification.delivery_policy["requires_user_visible_message"] is True
+        assert notification.delivery_policy["interrupt_user"] is False
     finally:
         await store.close()
 
@@ -85,6 +87,7 @@ async def test_notification_coordinator_creates_task_failed_notification():
         assert notification.notification_type == "task_failed"
         assert notification.urgency == "important"
         assert notification.reason == "tool crashed"
+        assert notification.delivery_policy["priority"] == "high"
         assert notification.delivery_policy["requires_user_visible_message"] is True
     finally:
         await store.close()
@@ -149,5 +152,40 @@ async def test_notification_coordinator_throttles_progress_updates():
         assert first.notification_id == second.notification_id
         assert len(notifications) == 1
         assert first.delivery_policy["min_interval_seconds"] == 300
+        assert first.delivery_policy["priority"] == "low"
+        assert first.delivery_policy["requires_user_visible_message"] is False
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_high_priority_failure_is_not_deduped_by_progress_update():
+    store = await build_store()
+    try:
+        dispatch = await store.create_thinker_dispatch(
+            kernel_session_id="ask_notify_priority",
+            task_id="task_notify_priority",
+            run_id="run_notify_priority",
+        )
+        coordinator = NotificationCoordinator(store)
+        progress = await coordinator.notify_dispatch_completed(
+            dispatch,
+            session_status="running",
+            active_run_completed=True,
+        )
+        failed = await coordinator.notify_dispatch_failed(
+            dispatch,
+            error="blocked by tool failure",
+            active_run_completed=True,
+        )
+        notifications = await store.list_observer_notifications(
+            kernel_session_id="ask_notify_priority",
+            status="",
+        )
+
+        assert progress.notification_type == "progress_update"
+        assert failed.notification_type == "task_failed"
+        assert failed.delivery_policy["priority"] == "high"
+        assert len(notifications) == 2
     finally:
         await store.close()

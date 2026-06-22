@@ -216,11 +216,13 @@ ack / resolve
 - dispatch completed -> `task_done` 或 `progress_update`
 - dispatch failed -> `task_failed`
 - stale dispatch 不生成 notification
+- 根据通知类型套用 urgency / priority / delivery policy
 
 当前已完成第一版：
 
 - notification 去重
 - min interval 节流
+- priority 策略表
 - delivery policy
 - SSE 轻量 stream
 
@@ -228,7 +230,7 @@ ack / resolve
 
 - 独立后台 push broker
 - WebSocket
-- 更复杂的 urgency 升级策略
+- 多次失败后自动升级为 `interrupt` 这类复杂 urgency 升级策略
 
 ## 11. 当前已稳定验证的能力
 
@@ -251,17 +253,21 @@ ack / resolve
 | NotificationCoordinator | 已完成第一版 |
 | task conversation refs | 已完成第一版 |
 
-## 12. 当前工作区正在进行的改动
+## 12. 当前工作区状态
 
-当前工作区有未提交改动，内容是正在继续补：
+当前主线改动已经按阶段提交。具体是否还有本地未提交内容，以 `git status` 为准。
 
-| 进行中内容 | 状态 |
+近期已完成并提交的内容：
+
+| 内容 | 状态 |
 |---|---|
-| 外部 Observer/Talker 最终回复 conversation ref 回传 | 正在实现 |
-| ConversationRefCoordinator | 正在实现 |
-| RuntimeEventAdapter 通用封装 | 正在实现 |
+| 外部 Observer/Talker 最终回复 conversation ref 回传 | 已完成第一版 |
+| ConversationRefCoordinator | 已完成第一版 |
+| RuntimeEventAdapter 通用封装 | 已完成第一版 |
+| Observer / Talker notification SSE | 已完成第一版 |
+| Notification policy 去重 / 节流 / 优先级 | 已完成第一版 |
 
-这些尚未完成全量测试和提交，不能算稳定状态。
+这些仍然是渐进式实现，不代表 Runtime 生态已经全部接完。
 
 ## 13. 仍未完成的主要差距
 
@@ -270,8 +276,8 @@ ack / resolve
 | KmsManager 仍偏大 | 调度分支还集中在一个方法里 |
 | Runtime Event Adapter 深度接入 Hermes | 通用 Adapter 已有，真实 Hermes 侧还可继续接入更多 runtime refs |
 | Observer notification WebSocket | SSE 第一版已完成，WebSocket 未做 |
-| Notification 高级优先级策略 | 第一版去重/节流已完成，复杂升级策略未做 |
-| Observer/Talker 最终回复回传 | conversation ref API 已完成第一版 |
+| Notification 高级优先级策略 | 第一版策略表已完成，复杂升级策略未做 |
+| Observer/Talker 最终回复回传 | conversation ref API 和 Hermes 回传已完成第一版 |
 | 状态表主从切换 | 旧表仍是事实来源，不建议马上硬切 |
 
 ## 14. 不建议立刻做的事
