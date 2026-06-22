@@ -1539,3 +1539,68 @@ active_run=empty
 - Thinker 已不再消费旧形状调试输出。
 - 旧 getter 重新流入业务代码的风险已由测试拦截。
 - 旧表仍不能删，下一步要处理的是 `sqlite_store.py` 的双写和历史 fallback。
+
+## 2026-06-22：测试分层
+
+本阶段先处理测试执行效率问题，不减少覆盖，只减少不必要的全量测试次数。
+
+新增脚本：
+
+```text
+scripts/test_tiers.py
+scripts/test_fast.py
+scripts/test_core.py
+scripts/test_full.py
+```
+
+分层规则：
+
+| 层级 | 命令 | 用途 |
+|---|---|---|
+| fast | `python scripts/test_fast.py` | 小改动快速检查 |
+| core | `python scripts/test_core.py` | KMS/Kernel/Router/打断链路改动 |
+| full | `python scripts/test_full.py` | 阶段完成或提交前全量检查 |
+
+新增文档：
+
+```text
+docs/testing.md
+```
+
+新增元测试：
+
+```text
+tests/test_test_tiers.py
+```
+
+它会检查：
+
+- fast/core 引用的测试文件必须存在；
+- core 必须包含 fast；
+- test runner 必须清空项目 pytest addopts，避免环境默认参数干扰。
+
+当前建议：
+
+- 小改不再默认跑全量；
+- 架构主链路改动跑 core；
+- 阶段完成再跑 full；
+- 真实模型/Hermes 改动单独跑 live smoke。
+
+验证结果：
+
+```text
+python -m py_compile scripts\test_tiers.py scripts\test_fast.py scripts\test_core.py scripts\test_full.py
+passed
+
+python -m pytest -o addopts='' -q tests\test_test_tiers.py
+3 passed
+
+python scripts\test_fast.py
+43 passed in 18.68s
+
+python scripts\test_core.py
+106 passed in 152.14s
+
+python scripts\test_full.py
+117 passed in 154.26s
+```
