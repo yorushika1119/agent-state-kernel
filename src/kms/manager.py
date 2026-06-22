@@ -19,6 +19,7 @@ from src.kms.task_coordinators import (
     TaskSwitchCoordinator,
 )
 from src.kms.task_routing_coordinator import TaskRoutingCoordinator
+from src.kms.thinker_dispatch_coordinator import ThinkerDispatchCoordinator
 
 
 @dataclass
@@ -55,6 +56,10 @@ class KmsManager:
         )
         self.lifecycle = DispatchLifecycleCoordinator(store, engine)
         self.conversation_refs = ConversationRefCoordinator(store)
+        self.thinker_dispatches = ThinkerDispatchCoordinator(
+            self.lifecycle,
+            self.conversation_refs,
+        )
         self.route_clarifications = RouteClarificationCoordinator(store)
         self.direct_replies = KernelDirectReplyCoordinator(
             self.direct_responder,
@@ -395,37 +400,19 @@ class KmsManager:
 
         thinker_dispatch = None
         if active_task:
-            thinker_dispatch = await self.lifecycle.create_thinker_dispatch(
-                session_id=session.kernel_session_id,
-                task_id=active_task.task_id,
+            thinker_dispatch = await self.thinker_dispatches.create_for_user_message(
+                session=session,
+                task=active_task,
                 run_id=run_id,
                 task_brief_version=refreshed.intent_version if refreshed else session.intent_version,
                 dispatch_type=task_action or action,
-                cancellation_token=False,
-                payload={
-                    "user_message": text,
-                    "action": action,
-                    "task_action": task_action,
-                    "route_decision": route.routing_decision,
-                    "resume_context": resume_context,
-                },
-            )
-            await self.conversation_refs.record(
-                text_summary=text,
+                user_text=text,
+                action=action,
+                task_action=task_action,
+                route=route,
                 user_session_id=user_session.user_session_id,
-                kernel_session_id=session.kernel_session_id,
-                task_id=active_task.task_id,
-                run_id=run_id,
-                route_id=route.route_id,
+                resume_context=resume_context,
                 runtime_refs=runtime_refs,
-                metadata={
-                    "action": action,
-                    "task_action": task_action,
-                    "route_decision": route.routing_decision,
-                    "thinker_dispatch_id": thinker_dispatch.dispatch_id
-                    if thinker_dispatch
-                    else "",
-                },
             )
 
         return DispatchDecision(
