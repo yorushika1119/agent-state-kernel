@@ -153,6 +153,8 @@ class KmsManager:
         kernel_session_id: str = "",
         task_id: str = "",
         run_id: str = "",
+        role: str = "user",
+        source: str = "dispatch_user_message",
         route_id: str = "",
         runtime_refs: Optional[dict] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -171,8 +173,8 @@ class KmsManager:
             kernel_session_id=kernel_session_id,
             task_id=task_id,
             run_id=run_id,
-            role="user",
-            source="dispatch_user_message",
+            role=role,
+            source=source,
             message_ref_id=message_ref_id,
             text_summary=text.strip(),
             route_id=route_id,
@@ -235,12 +237,25 @@ class KmsManager:
         )
 
         if route_clarification_applies:
+            clarification_response = self._build_route_clarification_response(route)
             await self._record_task_conversation_ref(
                 text=text,
                 user_session_id=user_session.user_session_id,
                 kernel_session_id=session.kernel_session_id if session else "",
                 route_id=route.route_id,
                 runtime_refs=runtime_refs,
+                metadata={
+                    "route_decision": route.routing_decision,
+                    "task_action": "ask_clarification",
+                },
+            )
+            await self._record_task_conversation_ref(
+                text=clarification_response,
+                user_session_id=user_session.user_session_id,
+                kernel_session_id=session.kernel_session_id if session else "",
+                role="assistant",
+                source="kernel_route_clarification",
+                route_id=route.route_id,
                 metadata={
                     "route_decision": route.routing_decision,
                     "task_action": "ask_clarification",
@@ -256,7 +271,7 @@ class KmsManager:
                 task_action="ask_clarification",
                 task_id=session.active_task_id if session else "",
                 requires_thinker=False,
-                kernel_response=self._build_route_clarification_response(route),
+                kernel_response=clarification_response,
                 user_session_id=user_session.user_session_id,
                 route_decision=route.routing_decision,
             )
@@ -280,6 +295,21 @@ class KmsManager:
                 run_id=session.active_run_id or "",
                 route_id=route.route_id,
                 runtime_refs=runtime_refs,
+                metadata={
+                    "route_decision": route.routing_decision,
+                    "task_action": "respond_from_kernel",
+                    "kernel_answer_kind": intent.kernel_answer_kind or "progress",
+                },
+            )
+            await self._record_task_conversation_ref(
+                text=kernel_response,
+                user_session_id=user_session.user_session_id,
+                kernel_session_id=session.kernel_session_id,
+                task_id=response_task_id,
+                run_id=session.active_run_id or "",
+                role="assistant",
+                source="kernel_direct_response",
+                route_id=route.route_id,
                 metadata={
                     "route_decision": route.routing_decision,
                     "task_action": "respond_from_kernel",
@@ -413,6 +443,7 @@ class KmsManager:
             if resume_task is None:
                 resume_task = await self.store.get_latest_paused_task(session.kernel_session_id)
             if resume_task is None:
+                response_text = "当前没有可继续的已挂起任务。"
                 await self._record_task_conversation_ref(
                     text=text,
                     user_session_id=user_session.user_session_id,
@@ -421,6 +452,21 @@ class KmsManager:
                     run_id=session.active_run_id or "",
                     route_id=route.route_id,
                     runtime_refs=runtime_refs,
+                    metadata={
+                        "route_decision": route.routing_decision,
+                        "task_action": "respond_from_kernel",
+                        "reason": "no_paused_task_to_resume",
+                    },
+                )
+                await self._record_task_conversation_ref(
+                    text=response_text,
+                    user_session_id=user_session.user_session_id,
+                    kernel_session_id=session.kernel_session_id,
+                    task_id=session.active_task_id or "",
+                    run_id=session.active_run_id or "",
+                    role="assistant",
+                    source="kernel_direct_response",
+                    route_id=route.route_id,
                     metadata={
                         "route_decision": route.routing_decision,
                         "task_action": "respond_from_kernel",
@@ -437,7 +483,7 @@ class KmsManager:
                     task_action="respond_from_kernel",
                     task_id=session.active_task_id or "",
                     requires_thinker=False,
-                    kernel_response="当前没有可继续的已挂起任务。",
+                    kernel_response=response_text,
                     user_session_id=user_session.user_session_id,
                     route_decision=route.routing_decision,
                 )

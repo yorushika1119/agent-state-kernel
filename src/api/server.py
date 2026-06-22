@@ -96,6 +96,8 @@ class ClaimThinkerDispatchRequest(BaseModel):
 
 class CompleteThinkerDispatchRequest(BaseModel):
     session_status: str = "completed"
+    response_summary: str = ""
+    runtime_refs: Optional[dict] = None
 
 
 class FailThinkerDispatchRequest(BaseModel):
@@ -128,6 +130,43 @@ async def _create_dispatch_notification(
             "dedupe_key": f"{dispatch.task_id or dispatch.kernel_session_id}:{notification_type}",
             "requires_user_visible_message": notification_type in {"task_failed", "task_done"},
         },
+    )
+
+
+def _message_ref_id(runtime_refs: Optional[dict]) -> str:
+    runtime_refs = runtime_refs or {}
+    return (
+        runtime_refs.get("message_id")
+        or runtime_refs.get("message_ref_id")
+        or runtime_refs.get("ref_id")
+        or ""
+    )
+
+
+async def _create_dispatch_conversation_ref(
+    engine: KernelEngine,
+    dispatch,
+    *,
+    role: str,
+    source: str,
+    text_summary: str = "",
+    runtime_refs: Optional[dict] = None,
+    metadata: Optional[dict] = None,
+) -> None:
+    message_ref_id = _message_ref_id(runtime_refs)
+    if not text_summary.strip() and not message_ref_id:
+        return
+    global_task = await engine.store.get_global_task(dispatch.task_id)
+    await engine.store.create_task_conversation_ref(
+        user_session_id=global_task.user_session_id if global_task else "",
+        kernel_session_id=dispatch.kernel_session_id,
+        task_id=dispatch.task_id,
+        run_id=dispatch.run_id,
+        role=role,
+        source=source,
+        message_ref_id=message_ref_id,
+        text_summary=text_summary.strip(),
+        metadata=metadata or {},
     )
 
 
@@ -498,6 +537,18 @@ async def complete_thinker_dispatch(dispatch_id: str, req: CompleteThinkerDispat
             urgency="normal",
             reason="thinker_dispatch_completed",
         )
+    await _create_dispatch_conversation_ref(
+        engine,
+        dispatch,
+        role="assistant",
+        source="thinker_dispatch_complete",
+        text_summary=req.response_summary,
+        runtime_refs=req.runtime_refs,
+        metadata={
+            "dispatch_id": dispatch.dispatch_id,
+            "session_status": req.session_status,
+        },
+    )
     return updated.model_dump()
 
 

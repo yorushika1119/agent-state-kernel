@@ -1172,6 +1172,8 @@ pytest
 - 新增表 `task_conversation_refs`。
 - `/kms/dispatch-user-message` 支持可选 `runtime_refs`，可携带 runtime message id。
 - KMS 在 dispatch 决策确定目标 task 后，写入 task-local conversation ref。
+- Kernel 直接回复会写入 `role=assistant` 的 conversation ref。
+- Thinker dispatch complete 可带 `response_summary` / `runtime_refs`，写入 assistant conversation ref。
 - Task Router 会把最近 task conversation refs 作为临时 routing hints，用来辅助“那个任务 / 当前进度 / 另一个”这类表达的归属判断。
 - `observer_view` / `manager_view` 增加 `recent_conversation_refs`。
 
@@ -1179,9 +1181,12 @@ pytest
 - 保存的是 `text_summary` 和 runtime `message_ref_id`，不是完整 transcript。
 - 完整消息历史、FTS、上下文压缩仍属于 Hermes / 宿主 runtime。
 - conversation refs 只服务 task routing、view 上下文和审计，不作为 claim/evidence 的事实来源。
+- Observer/Talker 在外部 UI 最终发给用户的全文仍由 runtime 保存；Kernel 后续只需要接收摘要和 message id。
 
 验证覆盖：
 - dispatch 后用户消息会归档到对应 task。
 - status query 不唤醒 Thinker 时也会归档到同一个 task。
+- Kernel direct response 会归档为 assistant ref。
+- Thinker complete 回传的回答摘要会归档为 assistant ref。
 - Router 能利用 task conversation refs 选择正确 task。
 - manager / observer view 能看到最近 conversation refs。
