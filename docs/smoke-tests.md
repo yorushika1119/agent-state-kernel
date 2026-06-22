@@ -68,6 +68,44 @@ late_tool_result_attempted=True
 - 旧工具进程被终止。
 - 旧 run 的迟到结果被拒绝。
 
+## 3. Real Hermes model interrupt smoke
+
+用途：验证真实 Hermes Gateway + 真实 DeepSeek 模型 + KMS/Kernel dispatch 的完整打断链路。
+
+前置条件：
+
+- 真实 Hermes 部署目录存在：
+  `C:\Users\EDY\AppData\Local\hermes\hermes-agent`
+- Hermes 配置中有可用模型和 API key。
+- 当前脚本使用内存 Kernel，不需要单独启动 `uvicorn`。
+
+命令：
+
+```powershell
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python scripts\live_interrupt_demo.py --real-model --scenario interrupt
+```
+
+预期关键输出：
+
+```text
+KERNEL_AFTER_USER#1: action=start_new_task
+KERNEL_AFTER_USER#2: action=interrupt_and_replan
+THINKER_DISPATCHES:
+  first dispatch status=failed
+  second dispatch status=completed
+TASK_CONVERSATION_REFS:
+  assistant source=gateway_streamed_reply message_ref_id=...
+ACTIVE_RUN_AFTER_DONE: empty
+```
+
+含义：
+
+- 第一条长任务被第二条用户消息打断。
+- 新请求获得新的 thinker dispatch。
+- 旧 dispatch 不再成为最终回复。
+- 最终回复的外部 `message_id` 会回传到 Kernel 的 task conversation refs。
+
 ## 运行策略
 
 | 场景 | 建议 |
