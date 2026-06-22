@@ -438,6 +438,11 @@ class KernelEngine:
             kernel_session_id=session_id,
             status="pending",
         )
+        conversation_refs = await self.store.list_task_conversation_refs(
+            kernel_session_id=session_id,
+            task_id=session.active_task_id,
+            limit=8,
+        )
         dispatches = state["thinker_dispatches"]
         intent = state["intent"]
 
@@ -476,6 +481,9 @@ class KernelEngine:
             "one_line_summary": progress.summary if progress else "",
             "summary_for_observer": progress.summary if progress else "",
             "current_focus": active_task.current_step_name if active_task else "",
+            "recent_conversation_refs": [
+                ref.model_dump() for ref in conversation_refs
+            ],
             "recent_updates": self._build_recent_updates(
                 executions,
                 dispatches,
@@ -520,6 +528,11 @@ class KernelEngine:
             kernel_session_id=session_id,
             status="pending",
         )
+        conversation_refs = await self.store.list_task_conversation_refs(
+            kernel_session_id=session_id,
+            task_id=session.active_task_id,
+            limit=12,
+        )
         pending_confirmations = [
             commitment.statement
             for commitment in commitments
@@ -560,6 +573,9 @@ class KernelEngine:
             },
             "blocking_reason": blocking_reason,
             "pending_confirmations": pending_confirmations,
+            "recent_conversation_refs": [
+                ref.model_dump() for ref in conversation_refs
+            ],
             "open_todos": [
                 todo.model_dump()
                 for todo in todos

@@ -1,6 +1,6 @@
 """SQLite 持久化层 — Agent State Kernel 的存储引擎。
 
-管理 21 张表：
+管理 22 张表：
   1. cognitive_events     — 追加事件日志
   2. evidence_items        — 证据条目
   3. belief_items          — 信念条目
@@ -22,6 +22,7 @@
   19. todo_obligations     — 新版 todo 兼容影子表
   20. thinker_dispatches   — Thinker 下发队列
   21. observer_notifications — Observer / Talker 主动通知
+  22. task_conversation_refs — task 级 runtime 消息引用
 
 所有表通过 kernel_session_id 关联到一个会话。
 事件日志为 append-only——从不更新或删除。
@@ -57,6 +58,7 @@ from src.schema.state import (
     Reliability,
     RuntimeReference,
     TaskBriefState,
+    TaskConversationRef,
     TaskFlowState,
     SessionLink,
     TaskRouteDecision,
@@ -489,6 +491,24 @@ class SqliteStore:
             )
         """)
 
+        # ─── 22. Task Conversation Refs ───
+        await self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS task_conversation_refs (
+                conversation_ref_id TEXT PRIMARY KEY,
+                user_session_id TEXT DEFAULT '',
+                kernel_session_id TEXT DEFAULT '',
+                task_id TEXT DEFAULT '',
+                run_id TEXT DEFAULT '',
+                role TEXT DEFAULT 'user',
+                source TEXT DEFAULT 'runtime_message',
+                message_ref_id TEXT DEFAULT '',
+                text_summary TEXT DEFAULT '',
+                route_id TEXT DEFAULT '',
+                metadata TEXT,
+                created_at TEXT
+            )
+        """)
+
         await self._ensure_column("cognitive_events", "run_id", "TEXT DEFAULT ''")
         await self._ensure_column("session_links", "active_run_id", "TEXT DEFAULT ''")
         await self._ensure_column("session_links", "active_task_id", "TEXT DEFAULT ''")
@@ -782,6 +802,7 @@ class SqliteStore:
             "task_snapshots", "global_tasks", "task_brief_states",
             "task_flows", "claim_items", "todo_obligations",
             "thinker_dispatches", "observer_notifications",
+            "task_conversation_refs",
             "belief_items", "evidence_items", "execution_actions",
             "commitments", "sync_cursors", "runtime_refs",
             "cognitive_events", "session_links",
@@ -1408,6 +1429,88 @@ class SqliteStore:
         await self.conn.commit()
         route.route_id = route_id
         return route
+
+    async def create_task_conversation_ref(
+        self,
+        *,
+        user_session_id: str = "",
+        kernel_session_id: str = "",
+        task_id: str = "",
+        run_id: str = "",
+        role: str = "user",
+        source: str = "runtime_message",
+        message_ref_id: str = "",
+        text_summary: str = "",
+        route_id: str = "",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> TaskConversationRef:
+        ref = TaskConversationRef(
+            conversation_ref_id=f"tmsg_{uuid.uuid4().hex[:12]}",
+            user_session_id=user_session_id,
+            kernel_session_id=kernel_session_id,
+            task_id=task_id,
+            run_id=run_id,
+            role=role,
+            source=source,
+            message_ref_id=message_ref_id,
+            text_summary=text_summary[:800],
+            route_id=route_id,
+            metadata=metadata or {},
+        )
+        await self.conn.execute(
+            """INSERT INTO task_conversation_refs
+               (conversation_ref_id, user_session_id, kernel_session_id, task_id,
+                run_id, role, source, message_ref_id, text_summary, route_id,
+                metadata, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                ref.conversation_ref_id,
+                ref.user_session_id,
+                ref.kernel_session_id,
+                ref.task_id,
+                ref.run_id,
+                ref.role,
+                ref.source,
+                ref.message_ref_id,
+                ref.text_summary,
+                ref.route_id,
+                json.dumps(ref.metadata, ensure_ascii=False, default=str),
+                ref.created_at.isoformat() if ref.created_at else utc_now_iso(),
+            ),
+        )
+        await self.conn.commit()
+        return ref
+
+    async def list_task_conversation_refs(
+        self,
+        *,
+        user_session_id: str = "",
+        kernel_session_id: str = "",
+        task_id: str = "",
+        role: str = "",
+        limit: int = 20,
+    ) -> List[TaskConversationRef]:
+        query = "SELECT * FROM task_conversation_refs"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if user_session_id:
+            clauses.append("user_session_id = ?")
+            params.append(user_session_id)
+        if kernel_session_id:
+            clauses.append("kernel_session_id = ?")
+            params.append(kernel_session_id)
+        if task_id:
+            clauses.append("task_id = ?")
+            params.append(task_id)
+        if role:
+            clauses.append("role = ?")
+            params.append(role)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = await self.conn.execute_fetchall(query, params)
+        return [self._row_to_task_conversation_ref(row) for row in rows]
 
     async def create_thinker_dispatch(
         self,
@@ -2134,6 +2237,22 @@ class SqliteStore:
             last_manager_update_at=utc_from_iso(row["last_manager_update_at"]) if row["last_manager_update_at"] else None,
             last_talker_update_at=utc_from_iso(row["last_talker_update_at"]) if row["last_talker_update_at"] else None,
             last_thinker_update_at=utc_from_iso(row["last_thinker_update_at"]) if row["last_thinker_update_at"] else None,
+        )
+
+    def _row_to_task_conversation_ref(self, row) -> TaskConversationRef:
+        return TaskConversationRef(
+            conversation_ref_id=row["conversation_ref_id"],
+            user_session_id=row["user_session_id"] or "",
+            kernel_session_id=row["kernel_session_id"] or "",
+            task_id=row["task_id"] or "",
+            run_id=row["run_id"] or "",
+            role=row["role"] or "user",
+            source=row["source"] or "runtime_message",
+            message_ref_id=row["message_ref_id"] or "",
+            text_summary=row["text_summary"] or "",
+            route_id=row["route_id"] or "",
+            metadata=json.loads(row["metadata"] or "{}"),
+            created_at=utc_from_iso(row["created_at"]) if row["created_at"] else utc_now(),
         )
 
     def _row_to_thinker_dispatch(self, row) -> ThinkerDispatch:

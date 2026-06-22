@@ -1162,3 +1162,26 @@ pytest
 - 仍是 HTTP 查询视图，不是订阅推送。
 - Notification policy 仍在 API 层做最小生成，后续应拆为 coordinator。
 - 旧状态表仍是事实来源，新命名表仍处于兼容/影子层。
+
+## 2026-06-22：task-local conversation refs
+
+本阶段补齐“一个 user session 下多个 task 的消息归属”能力，但不把 Kernel 做成 message history 数据库。
+
+核心变化：
+- 新增 `TaskConversationRef`。
+- 新增表 `task_conversation_refs`。
+- `/kms/dispatch-user-message` 支持可选 `runtime_refs`，可携带 runtime message id。
+- KMS 在 dispatch 决策确定目标 task 后，写入 task-local conversation ref。
+- Task Router 会把最近 task conversation refs 作为临时 routing hints，用来辅助“那个任务 / 当前进度 / 另一个”这类表达的归属判断。
+- `observer_view` / `manager_view` 增加 `recent_conversation_refs`。
+
+架构边界：
+- 保存的是 `text_summary` 和 runtime `message_ref_id`，不是完整 transcript。
+- 完整消息历史、FTS、上下文压缩仍属于 Hermes / 宿主 runtime。
+- conversation refs 只服务 task routing、view 上下文和审计，不作为 claim/evidence 的事实来源。
+
+验证覆盖：
+- dispatch 后用户消息会归档到对应 task。
+- status query 不唤醒 Thinker 时也会归档到同一个 task。
+- Router 能利用 task conversation refs 选择正确 task。
+- manager / observer view 能看到最近 conversation refs。

@@ -199,6 +199,27 @@ class TaskRouteDecision(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class TaskConversationRef(BaseModel):
+    """Task-local pointer to runtime conversation context.
+
+    Kernel stores a short summary/snippet plus runtime reference, not the full
+    message transcript owned by the host runtime.
+    """
+
+    conversation_ref_id: str
+    user_session_id: str = ""
+    kernel_session_id: str = ""
+    task_id: str = ""
+    run_id: str = ""
+    role: str = "user"
+    source: str = "runtime_message"
+    message_ref_id: str = ""
+    text_summary: str = ""
+    route_id: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 # ---------------------------------------------------------------------------
 # New architecture compatibility state
 # ---------------------------------------------------------------------------

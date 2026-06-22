@@ -78,6 +78,7 @@ class DispatchUserMessageRequest(BaseModel):
     target_session_id: str = ""
     user_session_id: str = ""
     mode: str = "auto"  # auto|new_task
+    runtime_refs: Optional[dict] = None
 
 
 class CompleteRunRequest(BaseModel):
@@ -404,6 +405,7 @@ async def dispatch_user_message(req: DispatchUserMessageRequest):
         target_session_id=req.target_session_id,
         user_session_id=req.user_session_id,
         mode=req.mode,
+        runtime_refs=req.runtime_refs,
     )
     return {
         "action": decision.action,

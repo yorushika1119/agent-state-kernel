@@ -145,6 +145,40 @@ class KmsManager:
             parts.append(f"{index}. {title}（{status}）")
         return question + "\n" + "\n".join(parts)
 
+    async def _record_task_conversation_ref(
+        self,
+        *,
+        text: str,
+        user_session_id: str,
+        kernel_session_id: str = "",
+        task_id: str = "",
+        run_id: str = "",
+        route_id: str = "",
+        runtime_refs: Optional[dict] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not text.strip():
+            return
+        runtime_refs = runtime_refs or {}
+        message_ref_id = (
+            runtime_refs.get("message_id")
+            or runtime_refs.get("message_ref_id")
+            or runtime_refs.get("ref_id")
+            or ""
+        )
+        await self.store.create_task_conversation_ref(
+            user_session_id=user_session_id,
+            kernel_session_id=kernel_session_id,
+            task_id=task_id,
+            run_id=run_id,
+            role="user",
+            source="dispatch_user_message",
+            message_ref_id=message_ref_id,
+            text_summary=text.strip(),
+            route_id=route_id,
+            metadata=metadata or {},
+        )
+
     async def dispatch_user_message(
         self,
         *,
@@ -160,6 +194,7 @@ class KmsManager:
         target_session_id: str = "",
         user_session_id: str = "",
         mode: str = "auto",
+        runtime_refs: Optional[dict] = None,
     ) -> DispatchDecision:
         routing = await self.task_router.route_message(
             text,
@@ -200,6 +235,17 @@ class KmsManager:
         )
 
         if route_clarification_applies:
+            await self._record_task_conversation_ref(
+                text=text,
+                user_session_id=user_session.user_session_id,
+                kernel_session_id=session.kernel_session_id if session else "",
+                route_id=route.route_id,
+                runtime_refs=runtime_refs,
+                metadata={
+                    "route_decision": route.routing_decision,
+                    "task_action": "ask_clarification",
+                },
+            )
             return DispatchDecision(
                 action="respond_from_kernel",
                 kernel_session_id=session.kernel_session_id if session else "",
@@ -225,6 +271,20 @@ class KmsManager:
                 session.kernel_session_id,
                 intent.kernel_answer_kind or "progress",
                 target_task_id=response_task_id,
+            )
+            await self._record_task_conversation_ref(
+                text=text,
+                user_session_id=user_session.user_session_id,
+                kernel_session_id=session.kernel_session_id,
+                task_id=response_task_id,
+                run_id=session.active_run_id or "",
+                route_id=route.route_id,
+                runtime_refs=runtime_refs,
+                metadata={
+                    "route_decision": route.routing_decision,
+                    "task_action": "respond_from_kernel",
+                    "kernel_answer_kind": intent.kernel_answer_kind or "progress",
+                },
             )
             return DispatchDecision(
                 action="respond_from_kernel",
@@ -353,6 +413,20 @@ class KmsManager:
             if resume_task is None:
                 resume_task = await self.store.get_latest_paused_task(session.kernel_session_id)
             if resume_task is None:
+                await self._record_task_conversation_ref(
+                    text=text,
+                    user_session_id=user_session.user_session_id,
+                    kernel_session_id=session.kernel_session_id,
+                    task_id=session.active_task_id or "",
+                    run_id=session.active_run_id or "",
+                    route_id=route.route_id,
+                    runtime_refs=runtime_refs,
+                    metadata={
+                        "route_decision": route.routing_decision,
+                        "task_action": "respond_from_kernel",
+                        "reason": "no_paused_task_to_resume",
+                    },
+                )
                 return DispatchDecision(
                     action="respond_from_kernel",
                     kernel_session_id=session.kernel_session_id,
@@ -479,6 +553,23 @@ class KmsManager:
                     "task_action": task_action,
                     "route_decision": route.routing_decision,
                     "resume_context": resume_context,
+                },
+            )
+            await self._record_task_conversation_ref(
+                text=text,
+                user_session_id=user_session.user_session_id,
+                kernel_session_id=session.kernel_session_id,
+                task_id=active_task.task_id,
+                run_id=run_id,
+                route_id=route.route_id,
+                runtime_refs=runtime_refs,
+                metadata={
+                    "action": action,
+                    "task_action": task_action,
+                    "route_decision": route.routing_decision,
+                    "thinker_dispatch_id": thinker_dispatch.dispatch_id
+                    if thinker_dispatch
+                    else "",
                 },
             )
 
