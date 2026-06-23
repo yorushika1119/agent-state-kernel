@@ -42,6 +42,12 @@ from src.kms.pipeline_stages.arbitrate import (
 )
 from src.kms.pipeline_stages.classify import ClassifyResult, classify
 from src.kms.pipeline_stages.event_log import assign_event_metadata as _assign_event_metadata
+from src.kms.pipeline_stages.gate import (
+    COMPLETION_KEYWORDS,
+    GateResult,
+    _rule_contradicts_verified_belief,
+    gate as _gate,
+)
 from src.kms.pipeline_stages.normalize import NormalizeResult, normalize
 from src.kms.pipeline_stages.summarize import (
     refresh_progress as _refresh_progress,
@@ -259,112 +265,13 @@ async def summarize(store, session_id: str) -> ProgressState:
 # 第 8 阶段：Gate — 可见性闸门（懒加载）
 # ===========================================================================
 
-@dataclass
-class GateResult:
-    """Visibility Gate 的输出。"""
-    allowed: bool
-    reason: Optional[str] = None
-    safe_alternative: Optional[str] = None
-
-
-# 规则层：声称完成的触发词
-COMPLETION_KEYWORDS = [
-    "完成", "已发送", "已发布", "成功了", "搞定了",
-    "done", "completed", "finished",
-]
-
-
-def _rule_contradicts_verified_belief(beliefs, proposed_message: str) -> Optional[str]:
-    message = proposed_message.lower()
-    no_competitor_claim = any(
-        marker in message
-        for marker in ("没有对手", "没有竞争对手", "唯一", "no competitor", "only choice")
-    )
-    if not no_competitor_claim:
-        return None
-
-    for belief in beliefs:
-        if getattr(getattr(belief, "status", None), "value", "") != "verified":
-            continue
-        claim = (belief.claim or "").lower()
-        mentions_competition = any(
-            marker in claim
-            for marker in ("amd", "竞争", "追赶", "对手", "competitor", "catching up")
-        )
-        if mentions_competition:
-            return belief.claim
-    return None
-
-
 async def gate(store, session_id: str, proposed_message: str = "") -> GateResult:
-    """可见性闸门：确定 Talker 能否安全地说某句话（§5.11）。
-
-    双层检查：
-    1. 规则层：关键词匹配完成声明 + unsafe_claims 字面匹配
-    2. 语义层（DeepSeek）：检查消息是否与已验证信念矛盾
-
-    规则层先运行（免费、快速），语义层后补（DeepSeek，仅在规则层放行后）。
-    """
-    progress = await store.get_progress(session_id)
-    if not progress:
-        progress = await refresh_progress(store, session_id)
-
-    if not proposed_message:
-        return GateResult(True)
-
-    # ── 第 1 层：规则检查 ──
-    # 声称完成但任务未完成 → 拦截
-    if any(kw in proposed_message.lower() for kw in COMPLETION_KEYWORDS):
-        if progress.status != "completed":
-            return GateResult(
-                False,
-                reason="任务尚未完成，不能宣称已完成",
-                safe_alternative=progress.summary,
-            )
-
-    # 包含未验证声明 → 拦截
-    for claim in progress.unsafe_claims:
-        if claim in proposed_message:
-            return GateResult(
-                False,
-                reason=f"包含未验证内容: {claim}",
-                safe_alternative="，".join(progress.safe_facts) if progress.safe_facts else progress.summary,
-            )
-
-    # ── 第 2 层：语义检查（DeepSeek）──
-    # 检查消息语义上是否与已验证信念矛盾
-    beliefs = beliefs_from_claims(await store.get_claim_items(session_id))
-    contradicted = _rule_contradicts_verified_belief(beliefs, proposed_message)
-    if contradicted:
-        return GateResult(
-            False,
-            reason=f"与信念矛盾: {contradicted[:80]}",
-            safe_alternative=progress.summary,
-        )
-
-    if beliefs and DEEPSEEK_API_KEY:
-        try:
-            from src.kms.decisioning.model import ModelCall
-            model = ModelCall()
-            belief_text = "\n".join(
-                f"- [{b.status.value}] {b.claim}"
-                for b in beliefs[:5]
-            )
-            result = await model.ask_json(
-                system="You are a fact-checker guarding an AI agent's output. Check if a proposed message contradicts any of the agent's verified beliefs. Respond ONLY with JSON: {\"contradicts\": true/false, \"which_belief\": \"brief quote of contradicted belief\", \"reason\": \"one sentence\"}",
-                user=f"Agent's current beliefs:\n{belief_text}\n\nProposed message: \"{proposed_message}\"\n\nDoes this message contradict any belief?",
-                max_tokens=100,
-            )
-            if result and result.get("contradicts"):
-                return GateResult(
-                    False,
-                    reason=f"与信念矛盾: {result.get('which_belief', '')[:80]} — {result.get('reason', '')}",
-                    safe_alternative=progress.summary,
-                )
-        except Exception as e:
-            logger.debug("Gate semantic check failed: %s", e)
-
-    return GateResult(True)
+    return await _gate(
+        store,
+        session_id,
+        proposed_message,
+        api_key=DEEPSEEK_API_KEY,
+    )
 
 
 # ===========================================================================

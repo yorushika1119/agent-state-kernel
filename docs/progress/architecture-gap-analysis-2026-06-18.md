@@ -2100,6 +2100,48 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 79 passed
 ```
 
+## 2026-06-23：KMS Gate stage 拆分
+
+本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/pipeline_stages/gate.py`。
+- 为什么改：Gate 是 KMS 的出口检查，负责判断 Talker 准备说的话是否安全，不应该继续混在大 `pipeline.py` 里。
+- 改完什么样：`pipeline.py` 继续对外提供 `GateResult/gate`，实际检查逻辑放在单独 stage 文件里。
+
+移动结果：
+
+| 原内容 | 新位置 |
+|---|---|
+| `GateResult` | `src/kms/pipeline_stages/gate.py` |
+| `COMPLETION_KEYWORDS` | `src/kms/pipeline_stages/gate.py` |
+| `_rule_contradicts_verified_belief` | `src/kms/pipeline_stages/gate.py` |
+| `gate` 实现 | `src/kms/pipeline_stages/gate.py` |
+
+兼容说明：
+
+- `src.kms.pipeline.GateResult` 和 `src.kms.pipeline.gate` 仍可导入。
+- `pipeline.DEEPSEEK_API_KEY` monkeypatch 行为保持：`pipeline.gate` 会把当前模块变量传入 stage。
+
+架构边界审查：
+
+- 仍是 KMS pipeline 的 Gate 阶段。
+- Kernel 只提供 progress/claim 状态，不做用户可见输出决策。
+- Talker 只消费 Gate 结果，不直接绕过检查。
+
+验证结果：
+
+```text
+python -m py_compile src\kms\pipeline.py src\kms\pipeline_stages\gate.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider -q tests\test_missing_coverage.py tests\test_pipeline_event_flow.py tests\test_manager_observer_views.py tests\test_smoke_interrupt.py
+37 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-gate -p no:cacheprovider
+79 passed
+```
+
 ## 2026-06-23：KMS Summarize stage 拆分
 
 本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。

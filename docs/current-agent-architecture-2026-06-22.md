@@ -771,3 +771,22 @@ src/kms/pipeline_stages/
 | `pipeline_stages/summarize.py` | 刷新 `progress_states`，并在可用时生成面向 Talker 的自然语言摘要 |
 
 `pipeline.py` 仍保留 `refresh_progress` 和 `summarize` 导出，避免破坏 `KernelEngine`、API server 和测试。
+
+## 36. 2026-06-23 Gate Stage 拆分
+
+KMS 9 阶段 pipeline 的 Gate 阶段已经移动到：
+
+```text
+src/kms/pipeline_stages/
+  gate.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `pipeline_stages/gate.py` | 判断 Talker 准备输出的话是否安全、是否和已验证信念冲突、是否过早宣称完成 |
+
+`pipeline.py` 仍保留 `GateResult`、`COMPLETION_KEYWORDS`、`_rule_contradicts_verified_belief` 和 `gate` 导出，避免破坏现有调用。
+
+架构边界不变：Gate 仍是 KMS 的出口判断；Kernel 只提供状态，Talker 只消费结果。
