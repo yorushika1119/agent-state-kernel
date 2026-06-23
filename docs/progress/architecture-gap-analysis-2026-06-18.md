@@ -2100,6 +2100,44 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 79 passed
 ```
 
+## 2026-06-23：KMS EventLog metadata 拆分
+
+本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/pipeline_stages/event_log.py`。
+- 为什么改：事件写入日志前需要统一补 `event_id/state_version/intent_version`，这是 EventLog 阶段的前置逻辑。
+- 改完什么样：`pipeline.py` 继续编排写日志，metadata 分配细节放到单独 stage 文件。
+
+移动结果：
+
+| 原内容 | 新位置 |
+|---|---|
+| `_assign_event_metadata` 实现 | `src/kms/pipeline_stages/event_log.py::assign_event_metadata` |
+
+兼容说明：
+
+- `src.kms.pipeline._assign_event_metadata` 仍然可导入，当前 `KernelEngine` 不需要改。
+
+架构边界审查：
+
+- 仍是 KMS pipeline 的 EventLog 前置逻辑。
+- Kernel 不直接生成 KMS 事件版本。
+- 事件日志写入顺序不变。
+
+验证结果：
+
+```text
+python -m py_compile src\kms\pipeline.py src\kms\pipeline_stages\event_log.py src\kernel\engine.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider -q tests\test_pipeline_event_flow.py tests\test_missing_coverage.py tests\test_smoke_interrupt.py
+35 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
+
 ## 2026-06-23：KMS Arbitrate stage 拆分
 
 本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。

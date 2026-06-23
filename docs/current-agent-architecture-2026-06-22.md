@@ -737,3 +737,20 @@ src/kms/pipeline_stages/
 | `pipeline_stages/arbitrate.py` | 把 candidate/proposal 事件提升为正式事件，并调用 inline/remote KMS judge |
 
 这一步继续按设计文档拆 pipeline；仲裁仍在 KMS，Kernel reducer 只接收仲裁后的事件。
+
+## 34. 2026-06-23 EventLog Metadata 拆分
+
+KMS 9 阶段 pipeline 的事件入日志前 metadata 分配逻辑已经移动到：
+
+```text
+src/kms/pipeline_stages/
+  event_log.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `pipeline_stages/event_log.py` | 为事件分配 `event_id`、`state_version`、`runtime_session_id` 和 `intent_version` |
+
+`pipeline.py` 仍保留 `_assign_event_metadata` 导出，避免破坏当前 `KernelEngine` 调用。

@@ -20,7 +20,6 @@ KMS 是认知状态变更的唯一切入点。Talker 和 Thinker 不能
 from __future__ import annotations
 
 import logging
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -43,6 +42,7 @@ from src.kms.pipeline_stages.arbitrate import (
     should_arbitrate,
 )
 from src.kms.pipeline_stages.classify import ClassifyResult, classify
+from src.kms.pipeline_stages.event_log import assign_event_metadata as _assign_event_metadata
 from src.kms.pipeline_stages.normalize import NormalizeResult, normalize
 from src.kms.pipeline_stages.validate import ValidateResult, validate
 from src.kms.runtime.execution_payload import merge_execution_payload
@@ -94,39 +94,6 @@ def intake(submission: EventSubmission) -> IntakeResult:
     if not submission.request_type:
         return IntakeResult(False, "Missing request_type")
     return IntakeResult(True, submission=submission)
-
-
-async def _assign_event_metadata(
-    store,
-    session_id: str,
-    event: CognitiveEvent,
-    *,
-    force_next_intent_version: bool = False,
-) -> CognitiveEvent:
-    """为即将入日志的事件分配唯一 ID、状态版本和 intent 版本。"""
-    latest = await store.get_latest_state_version(session_id)
-    session = await store.get_session(session_id)
-    task_brief = await store.get_task_brief(session_id)
-    current_intent_version = (
-        task_brief.task_brief_version
-        if task_brief and task_brief.task_brief_version
-        else session.intent_version if session else 0
-    )
-
-    if not event.event_id:
-        event.event_id = f"evt_{uuid.uuid4().hex[:12]}"
-    event.state_version = latest + 1
-    if not event.runtime_session_id and session:
-        event.runtime_session_id = session.runtime_session_id
-    if not event.run_id and session and event.actor == Actor.THINKER:
-        event.run_id = session.active_run_id or ""
-
-    if force_next_intent_version:
-        event.intent_version = current_intent_version + 1
-    elif event.intent_version <= 0:
-        event.intent_version = current_intent_version
-
-    return event
 
 
 # ===========================================================================

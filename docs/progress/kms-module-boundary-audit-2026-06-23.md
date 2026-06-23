@@ -36,6 +36,7 @@
 | `pipeline_stages/validate.py` | Validate 阶段：权限、版本和事件完整性检查 | 保留 | 属于 KMS 9 阶段 pipeline |
 | `pipeline_stages/classify.py` | Classify 阶段：事件类别路由 | 保留 | 属于 KMS 9 阶段 pipeline |
 | `pipeline_stages/arbitrate.py` | Arbitrate 阶段：candidate 提升和 judge 仲裁 | 保留 | 属于 KMS 9 阶段 pipeline |
+| `pipeline_stages/event_log.py` | EventLog 前置：event metadata 分配 | 保留 | 属于 KMS 9 阶段 pipeline |
 | `audit/state_source.py` | 新旧状态来源审计 | 保留 | 旧表退场前需要 |
 | `pipeline.py` | KMS 事件 pipeline | 保留但偏大 | 后续单独拆，不和 dispatch 混在一起 |
 | `decisioning/intent_classifier.py` | 用户消息意图判断 | 保留 | 属于 KMS 判断能力 |
@@ -88,6 +89,7 @@ src/kms/
     validate.py
     classify.py
     arbitrate.py
+    event_log.py
   notification/
     coordinator.py
   audit/
