@@ -35,6 +35,7 @@ from src.kernel.state_reducer import (
     synthesize_progress,
 )
 from src.kms.decisioning.model import DEEPSEEK_API_KEY
+from src.kms.pipeline_stages.normalize import NormalizeResult, normalize
 from src.kms.runtime.execution_payload import merge_execution_payload
 from src.kms.runtime.references import register_runtime_references
 from src.kms.state.aliases import (
@@ -48,7 +49,6 @@ from src.schema.events import (
     CognitiveEvent,
     EventSubmission,
     EventType,
-    RuntimeRef,
     Visibility,
 )
 from src.schema.state import (
@@ -89,237 +89,11 @@ def intake(submission: EventSubmission) -> IntakeResult:
     return IntakeResult(True, submission=submission)
 
 
-# ===========================================================================
-# 第 2 阶段：Normalize — 自由文本 → 结构化事件
-# ===========================================================================
-
-# Talker 请求类型 → EventType 映射（Talker 只能发这些）
-TALKER_REQUEST_MAP = {
-    "GET_TALKER_CONTEXT": None,       # 只读
-    "SUBMIT_USER_MESSAGE": EventType.INTENT_UPDATED,
-    "REGISTER_USER_INTENT_UPDATE": EventType.INTENT_UPDATED,
-    "REGISTER_COMMITMENT_PROPOSAL": EventType.COMMITMENT_CREATED,
-    "ASK_CAN_SAY": None,              # 只读
-    "ASK_CAN_DO": None,               # 只读
-}
-
-# Thinker 请求类型 → EventType 映射
-THINKER_EVENT_MAP = {
-    # 核心类型（§6.2）
-    "PlanProposed": EventType.PLAN_PROPOSED,
-    "BeliefProposed": EventType.BELIEF_PROPOSED,
-    "EvidenceCandidateFound": EventType.EVIDENCE_CANDIDATE_FOUND,
-    "ToolStarted": EventType.TOOL_STARTED,
-    "ToolCompleted": EventType.TOOL_COMPLETED,
-    "ToolFailed": EventType.TOOL_FAILED,
-    "ToolRetried": EventType.TOOL_RETRIED,
-    "StepStarted": EventType.STEP_STARTED,
-    "ConflictDetected": EventType.CONFLICT_DETECTED,
-    "VerificationWarningRaised": EventType.VERIFICATION_WARNING_RAISED,
-    "TaskCompleted": EventType.TASK_COMPLETED,
-    "TaskFailed": EventType.TASK_FAILED,
-    "IntentUpdated": EventType.INTENT_UPDATED,
-    "SessionCancelled": EventType.SESSION_CANCELLED,
-    # 扩展 Thinker 协议（§6.2）
-    "ReplanRequest": EventType.REPLAN_REQUEST,
-    "RiskAssessment": EventType.RISK_ASSESSMENT,
-    "ReasoningSummary": EventType.REASONING_SUMMARY,
-    "RawResultAvailable": EventType.RAW_RESULT_AVAILABLE,
-    "ActionBlocked": EventType.ACTION_BLOCKED,
-    "VerificationResult": EventType.VERIFICATION_RESULT,
-    "CompletionCheck": EventType.COMPLETION_CHECK,
-}
-
 CANDIDATE_TO_FINAL_EVENT = {
     EventType.PLAN_PROPOSED: EventType.PLAN_ACCEPTED,
     EventType.BELIEF_PROPOSED: EventType.BELIEF_UPDATED,
     EventType.EVIDENCE_CANDIDATE_FOUND: EventType.EVIDENCE_ACCEPTED,
 }
-
-
-@dataclass
-class NormalizeResult:
-    """Normalize 阶段的输出。"""
-    accepted: bool
-    event: Optional[CognitiveEvent] = None
-    reason: Optional[str] = None
-    is_read_only: bool = False  # GET_TALKER_CONTEXT、ASK_CAN_SAY 等只读请求
-
-
-# ── DeepSeek 的 Normalize 系统提示词 ──
-# 核心职责：将 Talker 的自然语言转换为结构化事件
-
-NORMALIZE_SYSTEM = """You are a cognitive event classifier for an AI agent Kernel. Given a natural language user message sent through the Talker, classify what kind of event it represents and extract structured payload.
-
-Respond ONLY with a JSON object, no markdown, no explanation.
-
-Event types and their payloads:
-- "IntentUpdated": payload has "goal" (string, the user's stated objective) and optionally "constraints" (array of strings)
-- "BeliefProposed": payload has "belief_id" (derive from content), "claim" (string), "status" ("verified"/"likely"/"unverified"), "confidence" (0.0-1.0)
-- "PlanProposed": payload has "plan_id", "plan" with "steps" array
-- "EvidenceCandidateFound": payload has "evidence_id", "evidence_type", "source", "title", "extracted_facts" (array of strings), "reliability"
-- "ToolStarted": payload has "action_id", "tool", "input_summary"
-- "TaskCompleted": payload has "step_id"
-- "CommitmentCreated": payload has "commitment_id", "description"
-
-Rules:
-1. If user describes a task to do or a question to answer → IntentUpdated
-2. If user states a fact or opinion → BeliefProposed
-3. If user gives a URL or reference → EvidenceCandidateFound
-4. If user asks to check/verify something → IntentUpdated with constraints
-5. If message is just greeting/thanks/noise → IntentUpdated with empty goal
-6. Always preserve the original meaning in Chinese if the input is Chinese
-
-Examples:
-Input: "帮我查一下最近AI公司融资情况"
-Output: {"event_type":"IntentUpdated","payload":{"goal":"查询最近AI公司融资情况","constraints":[]}}
-
-Input: "我觉得这个数据不对，上次说是50万，这次变42万了"
-Output: {"event_type":"IntentUpdated","payload":{"goal":"验证数据一致性","constraints":["上次说是50万","这次变42万"]}}
-
-Input: "你好"
-Output: {"event_type":"IntentUpdated","payload":{"goal":"greeting"}}"""
-
-
-async def normalize(submission: EventSubmission) -> NormalizeResult:
-    """将原始提交转换为结构化 CognitiveEvent。
-
-    两条路径：
-    1. 结构化（Thinker）：带映射 request_type → 直接映射
-    2. 原始文本（Talker）：自然语言 → DeepSeek 分类 → CognitiveEvent
-
-    这是唯一需要 LLM 调用的阶段——后续所有阶段都是确定性的。
-    """
-    component = submission.component
-    request_type = submission.request_type
-
-    # ── 路径 1：Talker 原始自然语言 ──
-    # Talker 发送 request_type="raw"，payload 里带 text 字段
-    if component == "talker" and request_type == "raw":
-        raw_text = submission.payload.get("text", "")
-        if not raw_text:
-            return NormalizeResult(False, reason="Raw request missing 'text' in payload")
-        return await _normalize_from_text(submission, raw_text)
-
-    # ── 路径 2：结构化（已有逻辑）──
-    if component == "talker":
-        event_type = TALKER_REQUEST_MAP.get(request_type)
-        if event_type is None:
-            # 只读请求（ASK_CAN_SAY、GET_TALKER_CONTEXT）——不做 Normalize
-            return NormalizeResult(True, is_read_only=True)
-        actor = Actor.TALKER
-
-    elif component == "thinker":
-        # 从 Thinker 映射表查找，或直接用 request_type 作为 EventType
-        event_type = THINKER_EVENT_MAP.get(request_type)
-        if event_type is None:
-            try:
-                event_type = EventType(request_type)
-            except ValueError:
-                return NormalizeResult(False, reason=f"Unknown event type: {request_type}")
-        actor = Actor.THINKER
-    else:
-        return NormalizeResult(False, reason=f"Unknown component: {component}")
-
-    # 构建 RuntimeRef
-    runtime_refs = RuntimeRef()
-    merged_runtime_refs = {}
-    if isinstance(submission.payload.get("runtime_refs"), dict):
-        merged_runtime_refs.update(submission.payload["runtime_refs"])
-    if submission.runtime_refs:
-        merged_runtime_refs.update(submission.runtime_refs)
-    if merged_runtime_refs:
-        runtime_refs = RuntimeRef(**merged_runtime_refs)
-
-    # 构建 CognitiveEvent（event_id 由流水线后续分配）
-    event = CognitiveEvent(
-        event_id="",
-        kernel_session_id=submission.session_id,
-        run_id=submission.run_id,
-        event_type=event_type,
-        actor=actor,
-        source_component=component,
-        payload=dict(submission.payload),
-        runtime_refs=runtime_refs,
-        visibility=Visibility.SHARED,
-        intent_version=submission.intent_version,
-    )
-
-    return NormalizeResult(True, event=event)
-
-
-async def _normalize_from_text(submission: EventSubmission, text: str) -> NormalizeResult:
-    """使用 DeepSeek 将自然语言解析为结构化 CognitiveEvent。
-
-    包含跟进消息检测：
-    - 短文本（<15 字符）或包含跟进指示词（"比"、"呢"、"上次"等）
-    - 且不是新任务（不含"帮我"、"查一下"等）
-    → 作为 constraint 追加到现有意图，不替换 goal
-    """
-    if not DEEPSEEK_API_KEY:
-        return _build_event(submission, EventType.INTENT_UPDATED, {"goal": text})
-
-    try:
-        from src.kms.decisioning.model import ModelCall
-        model = ModelCall()
-
-        # ── 跟进消息检测 ──
-        FOLLOWUP_INDICATORS = ["比", "呢", "上次", "刚才", "之前", "那个", "这个", "咋样"]
-        is_new_task = any(kw in text for kw in ["帮我", "查一下", "搜索", "找一下", "什么是", "多少钱"])
-        is_followup = (len(text) < 15 or any(kw in text for kw in FOLLOWUP_INDICATORS)) and not is_new_task
-
-        if is_followup and submission.intent_version > 0:
-            # 跟进消息作为约束追加，不替换原有意图
-            return _build_event(submission, EventType.INTENT_UPDATED, {"constraints": [text]})
-
-        # ── 调用 DeepSeek 分类 ──
-        result = await model.ask_json(
-            system=NORMALIZE_SYSTEM,
-            user=f"Input: \"{text}\"\nOutput:",
-            max_tokens=200,
-        )
-
-        if result is None:
-            return _build_event(submission, EventType.INTENT_UPDATED, {"goal": text})
-
-        event_type_str = result.get("event_type", "IntentUpdated")
-        payload = result.get("payload", {"goal": text})
-
-        # 跟进消息处理：如果已有意图，不覆盖 goal
-        if submission.intent_version > 0 and event_type_str == "IntentUpdated" and "goal" in payload:
-            payload["constraints"] = payload.get("constraints", []) + [payload["goal"]]
-            payload.pop("goal", None)
-
-        try:
-            event_type = EventType(event_type_str)
-        except ValueError:
-            event_type = EventType.INTENT_UPDATED
-
-        return _build_event(submission, event_type, payload)
-
-    except Exception as e:
-        logger.warning("Normalize DeepSeek call failed: %s", e)
-        return _build_event(submission, EventType.INTENT_UPDATED, {"goal": text})
-
-
-def _build_event(submission: EventSubmission, event_type: EventType, payload: dict) -> NormalizeResult:
-    """根据解析后的参数构建 CognitiveEvent。
-
-    辅助函数，被结构化路径和原始文本路径共用。
-    """
-    actor = Actor.TALKER if submission.component == "talker" else Actor.THINKER
-    event = CognitiveEvent(
-        event_id="",
-        kernel_session_id=submission.session_id,
-        run_id=submission.run_id,
-        event_type=event_type,
-        actor=actor,
-        source_component=submission.component,
-        payload=payload,
-        visibility=Visibility.SHARED,
-        intent_version=submission.intent_version,
-    )
-    return NormalizeResult(True, event=event)
 
 
 # ===========================================================================

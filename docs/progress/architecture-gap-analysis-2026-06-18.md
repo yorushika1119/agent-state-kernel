@@ -2100,6 +2100,44 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 79 passed
 ```
 
+## 2026-06-23：KMS Normalize stage 拆分
+
+本阶段开始按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/pipeline_stages/normalize.py`。
+- 为什么改：Normalize 是独立阶段，负责把 Talker/Thinker 原始提交变成结构化事件，不应该继续挤在 `pipeline.py` 主文件里。
+- 改完什么样：`pipeline.py` 继续编排 9 阶段，但 Normalize 的实现细节在单独 stage 文件里。
+
+移动结果：
+
+| 原内容 | 新位置 |
+|---|---|
+| `NormalizeResult` | `src/kms/pipeline_stages/normalize.py` |
+| `normalize` | `src/kms/pipeline_stages/normalize.py` |
+| `_normalize_from_text` | `src/kms/pipeline_stages/normalize.py` |
+| `_build_event` | `src/kms/pipeline_stages/normalize.py` |
+| `TALKER_REQUEST_MAP / THINKER_EVENT_MAP` | `src/kms/pipeline_stages/normalize.py` |
+
+架构边界审查：
+
+- 仍是 KMS pipeline 的 Normalize 阶段。
+- Kernel 不负责解析用户/Thinker submission。
+- Thinker 只提交事件，不决定事件是否接受。
+
+验证结果：
+
+```text
+python -m py_compile src\kms\pipeline.py src\kms\pipeline_stages\normalize.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider -q tests\test_pipeline_event_flow.py tests\test_missing_coverage.py tests\test_smoke_interrupt.py
+35 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
+
 ## 2026-06-23：KMS runtime execution payload 拆分
 
 本阶段继续拆 `pipeline.py` 内部小块，不改行为。

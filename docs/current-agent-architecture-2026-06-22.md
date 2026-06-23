@@ -669,3 +669,20 @@ src/kms/runtime/
 | `runtime/execution_payload.py` | 把 event.runtime_refs 合并回 execution reducer 可消费的 payload |
 
 这一步仍属于 Runtime Event Adapter 边界，不改变工具事件落表行为。
+
+## 30. 2026-06-23 Normalize Stage 拆分
+
+KMS 9 阶段 pipeline 的 Normalize 阶段已经移动到：
+
+```text
+src/kms/pipeline_stages/
+  normalize.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `pipeline_stages/normalize.py` | 把 Talker/Thinker submission 转成结构化 `CognitiveEvent` |
+
+这一步是按设计文档的 9 阶段拆分 pipeline；`pipeline.py` 仍保留对外 `normalize` 名字，调用方不需要改变。
