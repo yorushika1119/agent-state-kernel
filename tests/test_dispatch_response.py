@@ -158,3 +158,99 @@ async def test_dispatch_response_kernel_direct_reply_uses_target_task():
         assert decision.kernel_response == "当前任务正在执行。"
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_response_pre_execution_handles_kernel_direct_reply():
+    store, engine, manager = await build_runtime()
+    try:
+        session = await engine.create_session(
+            runtime_session_id="rt-response-pre-direct",
+            runtime_type="gateway",
+            agent_id="agent-response",
+        )
+        session.active_task_id = "task_active"
+        user_session = await store.observe_user_session(
+            runtime_session_id="rt-response-pre-direct",
+            runtime_type="gateway",
+            agent_id="agent-response",
+        )
+        route = TaskRouteDecision(
+            user_session_id=user_session.user_session_id,
+            runtime_session_id="rt-response-pre-direct",
+            routing_decision="select_existing",
+            target_task_id="task_selected",
+        )
+
+        async def _build_and_record(**kwargs):
+            assert kwargs["target_task_id"] == "task_selected"
+            assert kwargs["kind"] == "progress"
+            return "任务进度：正在执行。"
+
+        manager.dispatch_responses.direct_replies = SimpleNamespace(
+            build_and_record=_build_and_record,
+        )
+        prepared = SimpleNamespace(
+            user_session=user_session,
+            route=route,
+            session=session,
+            intent=SimpleNamespace(
+                reason="kernel_direct_status_reply",
+                kernel_answer_kind="progress",
+            ),
+            flags=SimpleNamespace(
+                route_clarification_applies=False,
+                wants_kernel_response=True,
+            ),
+        )
+
+        decision = await manager.dispatch_responses.pre_execution_response(
+            prepared=prepared,
+            user_text="现在进度如何？",
+        )
+
+        assert decision.action == "respond_from_kernel"
+        assert decision.task_action == "respond_from_kernel"
+        assert decision.task_id == "task_selected"
+        assert decision.kernel_response == "任务进度：正在执行。"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_response_post_execution_handles_no_resume_task():
+    store, engine, manager = await build_runtime()
+    try:
+        session = await engine.create_session(
+            runtime_session_id="rt-response-post-no-resume",
+            runtime_type="gateway",
+            agent_id="agent-response",
+        )
+        user_session = await store.observe_user_session(
+            runtime_session_id="rt-response-post-no-resume",
+            runtime_type="gateway",
+            agent_id="agent-response",
+        )
+        route = TaskRouteDecision(
+            user_session_id=user_session.user_session_id,
+            runtime_session_id="rt-response-post-no-resume",
+            routing_decision="select_existing",
+        )
+        execution = SimpleNamespace(
+            session=session,
+            task_brief_version=session.intent_version,
+            task_plan=SimpleNamespace(no_resume_task=True),
+        )
+
+        decision = await manager.dispatch_responses.post_execution_response(
+            execution=execution,
+            user_text="继续刚才的任务",
+            user_session_id=user_session.user_session_id,
+            route=route,
+        )
+
+        assert decision.action == "respond_from_kernel"
+        assert decision.reason == "no_paused_task_to_resume"
+        assert decision.kernel_response == "当前没有可继续的已挂起任务。"
+    finally:
+        await store.close()

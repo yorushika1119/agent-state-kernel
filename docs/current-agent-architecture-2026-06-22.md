@@ -1023,3 +1023,93 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-final-core
 ```
 
 架构边界不变：KMS 负责通知策略；Kernel/Store 只保存通知记录；Talker/Observer 只展示。
+
+## 47. 2026-06-23 Hermes Gateway Runtime Helper 深接入
+
+真实 Hermes Gateway 主流程已进一步接入 `hermes_cli.kernel_dispatch` helper。
+
+通俗说明：
+
+- 改哪里：`C:\Users\EDY\AppData\Local\hermes\hermes-agent\gateway\run.py`。
+- 为什么改：Gateway 原来在工具回调里直接拼 `ToolStarted / ToolCompleted / ToolFailed` 事件，容易和 CLI helper 分叉。
+- 改完什么样：Gateway 工具开始、工具完成、工具失败都通过专用 helper 上报；run 被打断时会先上报 `ActionBlocked`，再上报 `TaskFailed`。
+
+架构边界不变：
+
+| 模块 | 职责 |
+|---|---|
+| Hermes Gateway | 执行任务并上报 runtime event |
+| KMS | 调度 dispatch、处理打断恢复、生成通知 |
+| Kernel/Store | 保存事件、状态和视图 |
+
+验证结果：
+
+```text
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python -m py_compile gateway\run.py hermes_cli\kernel_dispatch.py
+passed
+
+python -m pytest -o addopts='' -q tests\gateway\test_busy_session_ack.py tests\gateway\test_proxy_mode.py tests\hermes_cli\test_kernel_dispatch.py
+65 passed, 1 skipped
+
+python -m pytest -o addopts='' -q tests\gateway\test_interrupt_demo_output.py
+7 passed
+```
+
+## 48. 2026-06-23 KmsManager Response 分支下沉
+
+`KmsManager.dispatch_user_message()` 里的直接回复分支已下沉到：
+
+```text
+src/kms/dispatch/response.py
+```
+
+通俗说明：
+
+- 改哪里：把“是否澄清 / 是否直接 Kernel 回复 / 是否没有可恢复任务”的响应判断移到 `DispatchResponseCoordinator`。
+- 为什么改：`KmsManager` 应该更像总调度入口，不应该自己负责各种回复细节。
+- 改完什么样：manager 主流程更薄，只串起 prepare、execute、response、decision。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-dispatch-response -p no:cacheprovider -q tests\test_dispatch_response.py tests\test_dispatch_preparation.py tests\test_kms_manager_components.py tests\test_dispatch_execution.py tests\test_smoke_interrupt.py
+20 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-gateway-helper-core -p no:cacheprovider
+83 passed
+
+python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-gateway-helper-new-table-only -p no:cacheprovider
+111 passed
+```
+
+架构边界不变：这仍然是 KMS 内部响应编排，没有把 Kernel 状态保存职责挪进 KMS。
+
+## 49. 2026-06-23 真实 DB 旧表 removal-check 复核
+
+本轮只检查真实库，不执行物理删表。
+
+命令：
+
+```text
+python scripts\migrate_legacy_state_tables.py data\kernel.db --removal-check
+```
+
+结果：
+
+```json
+{
+  "sessions": 6,
+  "legacy_rows": 6,
+  "unmigrated_sessions": 0,
+  "fallback_hit_count": 0,
+  "safe_to_remove": true,
+  "blockers": []
+}
+```
+
+当前判断：
+
+- 真实库当前没有 fallback 命中。
+- removal-check 认为可以移除旧状态表。
+- 但本轮仍未执行 `--drop-legacy-tables`，因为真实库删表属于最后收尾动作，建议先备份再做。

@@ -71,6 +71,8 @@ Talker / Hermes
 | KMS pipeline stage 拆分 | 已完成第一轮，Normalize/Validate/Classify/Arbitrate/EventLog/Reduce/Summarize/Gate/Sync 已拆出 |
 | 新表-only 主链路测试 | 已完成第一版，58 passed |
 | KmsManager DispatchDecision builder 拆分 | 已完成，manager 末尾拼装逻辑已移出 |
+| KmsManager response 分支拆分 | 已完成第一版，澄清/直接回复/no-resume 分支已移入 `DispatchResponseCoordinator` |
+| 真实 Hermes Gateway runtime helper 深接入 | 已完成第一版，工具事件走专用 helper，interrupted run 会上报 `ActionBlocked` |
 
 ## 4. 最近完成的阶段
 
@@ -138,7 +140,7 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-decision-b
 
 | 模块 | 粗略完成度 | 说明 |
 |---|---:|---|
-| KMS / Kernel / Thinker 分层 | 92% | 职责基本清楚，dispatch decision 和 task dispatch planner 已从 manager 拆出 |
+| KMS / Kernel / Thinker 分层 | 93% | 职责基本清楚，dispatch decision、task dispatch planner、response 分支和 component wiring 已从 manager 拆出 |
 | 打断与恢复 | 90% | integration 和真实 Hermes smoke 通过 |
 | Thinker dispatch 生命周期 | 85% | claim / heartbeat / complete / fail 已接通 |
 | Task Router 多任务路由 | 75% | 支持常见指代，LLM Router 已接入 |
@@ -146,8 +148,8 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-decision-b
 | User Session 多任务管理 | 80% | user_sessions / global_tasks / conversation refs 已有 |
 | Observer / Manager / Notification | 75% | API / SSE / WebSocket / policy 第一版可用，连续失败升级已补 |
 | 新状态表迁移 | 90% | 新表主读，写入代码已切到新表 |
-| 旧表退场 | 88% | 写入代码已移除，读取 fallback 已审计，removal-check/drop 工具有了，真实库物理删表未执行 |
-| 测试体系 | 85% | fast / core / integration / full 已分层，新表-only 覆盖扩到 109 条 |
+| 旧表退场 | 90% | 写入代码已移除，读取 fallback 已审计，真实库 removal-check 通过，物理删表未执行 |
+| 测试体系 | 86% | fast / core / integration / full 已分层，新表-only 覆盖扩到 111 条 |
 
 当前没有发现完成不了的硬阻塞。剩下主要是收尾、加固和产品化。
 
@@ -155,9 +157,9 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-decision-b
 
 | 下一步 | 原因 |
 |---|---|
-| 扩大新表-only integration / real smoke | 新表-only 已扩到 109 条，后续还要继续覆盖真实 DB 的长期运行场景 |
-| 继续拆 `KmsManager` 主流程 | dispatch decision、task dispatch planner、component wiring 已拆出，但主流程仍可继续分段 |
-| Runtime Event Adapter 深度接 Hermes | 工具/summary/raw result/action blocked 方法已有，gateway 主流程还可继续逐步接入 |
+| 扩大新表-only integration / real smoke | 新表-only 已扩到 111 条，后续还要继续覆盖真实 DB 的长期运行场景 |
+| 继续拆 `KmsManager` 主流程 | response 分支也已拆出，但 dispatch 主流程仍可继续收敛 |
+| Runtime Event Adapter 深度接 Hermes | Gateway 工具事件和 ActionBlocked 已接入，后续可补更多主流程事件 |
 | Observer notification 推送产品化 | SSE / WebSocket 第一版有了，后续还要补连接管理和前端消费示例 |
 | Notification 高级策略 | 连续失败升级已有，后续还可补更细的去重、节流、优先级规则 |
 | 旧表物理删除 | 工具有了，最后阶段再对真实库执行 |
@@ -253,3 +255,40 @@ python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-
 - 没有发现偏离架构设计文档。
 - 没有发现完成不了的硬阻塞。
 - 剩余主要是继续收敛 KMS 主流程、补真实 Gateway 更深接入、最后评估真实库旧表物理删除。
+
+## 12. 2026-06-23 Gateway Helper 深接入与 KmsManager Response 拆分
+
+本轮继续按架构文档推进，没有改变分层：
+
+| 本轮事项 | 当前结果 |
+|---|---|
+| 真实 Hermes Gateway helper 深接入 | 工具开始/完成/失败走专用 helper，打断时补 `ActionBlocked` |
+| KmsManager response 分支拆分 | 澄清、Kernel 直接回复、no-resume 回复移入 `DispatchResponseCoordinator` |
+| 真实 DB removal-check | `safe_to_remove=true`，`fallback_hit_count=0`，但未删表 |
+| 真实 tool interrupt smoke | 通过，旧 dispatch failed，新 dispatch completed |
+
+验证记录：
+
+```text
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python -m pytest -o addopts='' -q tests\gateway\test_busy_session_ack.py tests\gateway\test_proxy_mode.py tests\hermes_cli\test_kernel_dispatch.py
+65 passed, 1 skipped
+
+python -m pytest -o addopts='' -q tests\gateway\test_interrupt_demo_output.py
+7 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-gateway-helper-core -p no:cacheprovider
+83 passed
+
+python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-gateway-helper-new-table-only -p no:cacheprovider
+111 passed
+
+KERNEL_CREATE_LEGACY_STATE_TABLES=0 python scripts\live_tool_interrupt_smoke.py
+passed
+```
+
+注意：
+
+- live tool interrupt smoke 输出里有 `ModelCall HTTP 404`，我确认这不是 Hermes -> Kernel 上报失败，而是 KMS 内部真实模型调用返回 404 后走了降级路径。
+- 我不确定这是当前 DeepSeek base_url 配置问题，还是该 smoke 场景里不需要 LLM 路由导致的可忽略噪声；本轮没有强行改模型调用。
+- 真实库旧表仍未物理删除。

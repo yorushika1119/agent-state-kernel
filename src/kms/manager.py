@@ -70,41 +70,21 @@ class KmsManager:
         route = prepared.route
         route_target_task = prepared.route_target_task
         session = prepared.session
-        intent = prepared.intent
-        flags = prepared.flags
 
-        if flags.route_clarification_applies:
-            return await self.dispatch_responses.clarification(
-                session=session,
-                user_text=text,
-                user_session_id=user_session.user_session_id,
-                route=route,
-                runtime_refs=runtime_refs,
-            )
-
-        if session and flags.wants_kernel_response:
-            response_task_id = (
-                route.target_task_id
-                if route.routing_decision == "select_existing" and route.target_task_id
-                else session.active_task_id or ""
-            )
-            return await self.dispatch_responses.kernel_direct_reply(
-                session=session,
-                user_text=text,
-                user_session_id=user_session.user_session_id,
-                route=route,
-                reason=intent.reason or "kernel_direct_status_reply",
-                kind=intent.kernel_answer_kind or "progress",
-                target_task_id=response_task_id,
-                runtime_refs=runtime_refs,
-            )
+        response = await self.dispatch_responses.pre_execution_response(
+            prepared=prepared,
+            user_text=text,
+            runtime_refs=runtime_refs,
+        )
+        if response:
+            return response
 
         execution = await self.dispatch_execution.execute(
             text=text,
             session=session,
             route=route,
             route_target_task=route_target_task,
-            flags=flags,
+            flags=prepared.flags,
             user_session=user_session,
             agent_id=agent_id,
             runtime_id=runtime_id,
@@ -117,15 +97,15 @@ class KmsManager:
             runtime_refs=runtime_refs,
         )
 
-        if execution.task_plan.no_resume_task:
-            return await self.dispatch_responses.no_resume_task(
-                session=execution.session,
-                user_text=text,
-                user_session_id=user_session.user_session_id,
-                route=route,
-                task_brief_version=execution.task_brief_version,
-                runtime_refs=runtime_refs,
-            )
+        response = await self.dispatch_responses.post_execution_response(
+            execution=execution,
+            user_text=text,
+            user_session_id=user_session.user_session_id,
+            route=route,
+            runtime_refs=runtime_refs,
+        )
+        if response:
+            return response
 
         return thinker_run_decision_from_execution(
             execution=execution,

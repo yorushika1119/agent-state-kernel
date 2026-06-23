@@ -2919,3 +2919,74 @@ passed
 | 真实 Gateway 更深接入 runtime helper | helper 已有，主流程调用点还可继续补 |
 | Notification 策略产品化 | 现在只有第一版升级规则，后续可补更多去重/节流/优先级 |
 | 真实库旧表物理删除 | 工具已有，但真实库还需要备份和 removal-check 复核 |
+
+## 2026-06-23：Gateway Helper 深接入与 KmsManager Response 分支下沉
+
+本阶段继续沿新版架构文档推进，目标是把已经有的 helper 真正接入真实 Gateway 主流程，同时继续把 `KmsManager` 变薄。
+
+通俗说明：
+
+- 改哪里：真实 Hermes 的 `gateway/run.py`，以及主项目的 `src/kms/dispatch/response.py` 和 `src/kms/manager.py`。
+- 为什么改：Gateway 不应该自己拼 runtime event；KmsManager 也不应该继续直接处理各种回复细节。
+- 改完什么样：Gateway 工具事件统一走 `kernel_dispatch` helper；被打断的 run 会上报 `ActionBlocked`；KmsManager 把澄清、直接回复、no-resume 回复交给 `DispatchResponseCoordinator`。
+
+完成内容：
+
+| 事项 | 结果 |
+|---|---|
+| Gateway ToolStarted | 改为 `async_submit_tool_started(...)` |
+| Gateway ToolCompleted | 改为 `async_submit_tool_completed(...)` |
+| Gateway ToolFailed | 改为 `async_submit_tool_failed(...)` |
+| Gateway interrupted run | 先上报 `ActionBlocked`，再上报 `TaskFailed` |
+| KMS pre-execution response | 澄清 / Kernel 直接回复移入 `DispatchResponseCoordinator.pre_execution_response(...)` |
+| KMS post-execution response | no-resume 回复移入 `DispatchResponseCoordinator.post_execution_response(...)` |
+
+架构边界审查：
+
+| 边界 | 当前判断 |
+|---|---|
+| KMS | 继续负责调度、路由、直接回复、dispatch 决策 |
+| Kernel/Store | 继续负责事件和状态持久化 |
+| Hermes Gateway | 只执行任务并上报标准 runtime event |
+| Talker/Observer | 未参与状态写入 |
+
+验证结果：
+
+```text
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python -m py_compile gateway\run.py hermes_cli\kernel_dispatch.py
+passed
+
+python -m pytest -o addopts='' -q tests\gateway\test_busy_session_ack.py tests\gateway\test_proxy_mode.py tests\hermes_cli\test_kernel_dispatch.py
+65 passed, 1 skipped
+
+python -m pytest -o addopts='' -q tests\gateway\test_interrupt_demo_output.py
+7 passed
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-dispatch-response -p no:cacheprovider -q tests\test_dispatch_response.py tests\test_dispatch_preparation.py tests\test_kms_manager_components.py tests\test_dispatch_execution.py tests\test_smoke_interrupt.py
+20 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-gateway-helper-core -p no:cacheprovider
+83 passed
+
+python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-gateway-helper-new-table-only -p no:cacheprovider
+111 passed
+
+KERNEL_CREATE_LEGACY_STATE_TABLES=0 python scripts\live_tool_interrupt_smoke.py
+passed
+```
+
+真实库旧表检查：
+
+```text
+python scripts\migrate_legacy_state_tables.py data\kernel.db --removal-check
+safe_to_remove=true
+fallback_hit_count=0
+```
+
+当前未处理问题：
+
+| 问题 | 判断 |
+|---|---|
+| `ModelCall HTTP 404` | 真实 tool interrupt smoke 中出现，但不影响打断链路；我不确定是否是 DeepSeek base_url 配置噪声，本轮未强行改 |
+| 真实库物理删旧表 | removal-check 已通过，但仍未执行 drop，建议最后备份后再做 |

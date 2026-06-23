@@ -34,6 +34,67 @@ class DispatchResponseCoordinator:
         )
         return version + increment
 
+    async def pre_execution_response(
+        self,
+        *,
+        prepared: Any,
+        user_text: str,
+        runtime_refs: Optional[dict] = None,
+    ) -> Optional[DispatchDecision]:
+        user_session = prepared.user_session
+        route = prepared.route
+        session = prepared.session
+        intent = prepared.intent
+        flags = prepared.flags
+
+        if flags.route_clarification_applies:
+            return await self.clarification(
+                session=session,
+                user_text=user_text,
+                user_session_id=user_session.user_session_id,
+                route=route,
+                runtime_refs=runtime_refs,
+            )
+
+        if session and flags.wants_kernel_response:
+            response_task_id = (
+                route.target_task_id
+                if route.routing_decision == "select_existing" and route.target_task_id
+                else session.active_task_id or ""
+            )
+            return await self.kernel_direct_reply(
+                session=session,
+                user_text=user_text,
+                user_session_id=user_session.user_session_id,
+                route=route,
+                reason=intent.reason or "kernel_direct_status_reply",
+                kind=intent.kernel_answer_kind or "progress",
+                target_task_id=response_task_id,
+                runtime_refs=runtime_refs,
+            )
+
+        return None
+
+    async def post_execution_response(
+        self,
+        *,
+        execution: Any,
+        user_text: str,
+        user_session_id: str,
+        route: Any,
+        runtime_refs: Optional[dict] = None,
+    ) -> Optional[DispatchDecision]:
+        if not execution.task_plan.no_resume_task:
+            return None
+        return await self.no_resume_task(
+            session=execution.session,
+            user_text=user_text,
+            user_session_id=user_session_id,
+            route=route,
+            task_brief_version=execution.task_brief_version,
+            runtime_refs=runtime_refs,
+        )
+
     async def clarification(
         self,
         *,
