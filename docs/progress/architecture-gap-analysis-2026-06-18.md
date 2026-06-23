@@ -1936,3 +1936,31 @@ python -m pytest -o addopts='' -q tests\hermes_cli\test_kernel_dispatch.py tests
 - KMS 分层又前进了一步，`dispatch_preparation` 已经承担前置只读判断。
 - Gateway runtime event 已收敛到共享 helper，真实 Hermes 与项目内 Runtime Event Adapter 的协议形状更一致。
 - 下一步应继续拆 `KmsManager` 里“创建 run、提交用户消息、创建 task、创建 thinker dispatch”这一段执行编排，或者继续把 Hermes 更深的工具/流式事件引用补齐到 runtime refs。
+## 2026-06-23：DispatchExecution 拆分
+
+本阶段继续收敛 `KmsManager`，把“需要 Thinker 执行的调度落地动作”拆到 `DispatchExecutionCoordinator`。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/dispatch_execution.py`。
+- 为什么改：上一轮已经把“先判断用户想干什么”拆出去了，但 `KmsManager` 里还保留了“创建 run、提交用户消息、创建 task、同步 global task、创建 thinker dispatch”等执行细节。
+- 改完什么样：`KmsManager` 现在更像总控；真正执行调度的动作由 `DispatchExecutionCoordinator` 负责。
+
+职责边界：
+
+- `DispatchExecutionCoordinator` 仍属于 KMS 层。
+- 它不改 Kernel reducer，不把调度逻辑放进 Kernel。
+- 它不让 Thinker 自己选择任务；Thinker 仍只消费 KMS 创建的 `thinker_dispatch`。
+- `respond_from_kernel / ask_clarification / resume_context / interrupt_and_replan` 语义保持不变。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' -q tests\test_dispatch_execution.py tests\test_dispatch_preparation.py tests\test_task_directory_router.py tests\test_smoke_interrupt.py
+28 passed in 100.13s
+```
+
+当前结论：
+
+- `KmsManager` 已完成第二步拆分：前置准备和执行调度都已分离。
+- 下一步如果继续拆，应该拆“Kernel 直接回复 / 澄清回复返回 DispatchDecision”的包装，让 manager 只保留更薄的分支编排。

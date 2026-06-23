@@ -1,0 +1,210 @@
+"""Execute KMS dispatch decisions that require Thinker work."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Optional
+
+
+@dataclass
+class DispatchExecutionResult:
+    session: Any
+    refreshed: Any
+    active_task: Any
+    task_plan: Any
+    run_id: str
+    task_brief_version: int
+    thinker_dispatch: Any = None
+    kernel_response: str = ""
+    reason: str = ""
+    task_action: str = ""
+    resume_context: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def requires_thinker(self) -> bool:
+        return self.thinker_dispatch is not None
+
+
+class DispatchExecutionCoordinator:
+    """Creates/updates runs, tasks, and thinker dispatches inside KMS."""
+
+    def __init__(
+        self,
+        *,
+        store,
+        sessions,
+        lifecycle,
+        task_dispatch_planner,
+        task_switches,
+        thinker_dispatches,
+        direct_replies,
+    ):
+        self.store = store
+        self.sessions = sessions
+        self.lifecycle = lifecycle
+        self.task_dispatch_planner = task_dispatch_planner
+        self.task_switches = task_switches
+        self.thinker_dispatches = thinker_dispatches
+        self.direct_replies = direct_replies
+
+    async def task_brief_version_for_session(
+        self,
+        session: Any,
+        *,
+        increment: int = 0,
+    ) -> int:
+        if session is None:
+            return increment
+        task_brief = await self.store.get_task_brief(session.kernel_session_id)
+        version = (
+            task_brief.task_brief_version
+            if task_brief and task_brief.task_brief_version
+            else session.intent_version
+        )
+        return version + increment
+
+    async def execute(
+        self,
+        *,
+        text: str,
+        session: Any,
+        route: Any,
+        route_target_task: Any,
+        flags: Any,
+        user_session: Any,
+        agent_id: str = "",
+        runtime_id: str = "",
+        runtime_session_id: str = "",
+        runtime_type: str = "cli-agent",
+        external_source: str = "",
+        external_workspace_id: str = "",
+        external_issue_id: str = "",
+        external_task_id: str = "",
+        runtime_refs: Optional[dict] = None,
+    ) -> DispatchExecutionResult:
+        session, created_session = await self.sessions.get_or_create_session(
+            session,
+            agent_id=agent_id,
+            runtime_id=runtime_id,
+            runtime_session_id=runtime_session_id,
+            runtime_type=runtime_type,
+            external_source=external_source,
+            external_workspace_id=external_workspace_id,
+            external_issue_id=external_issue_id,
+            external_task_id=external_task_id,
+        )
+
+        run_id = self.lifecycle.new_run_id()
+        previous_run_id = session.active_run_id or ""
+        current_version = await self.task_brief_version_for_session(session)
+        task_plan = await self.task_dispatch_planner.plan(
+            session=session,
+            created_session=created_session,
+            route=route,
+            route_target_task=route_target_task,
+            explicit_new_task_requested=flags.explicit_new_task_requested,
+            wants_new_task=flags.wants_new_task,
+            wants_resume=flags.wants_resume,
+            wants_same_task_steer=flags.wants_same_task_steer,
+            previous_run_id=previous_run_id,
+            run_id=run_id,
+            current_task_brief_version=current_version,
+            next_task_brief_version=current_version + 1,
+            user_session_id=user_session.user_session_id,
+            agent_id=agent_id,
+        )
+
+        if task_plan.no_resume_task:
+            response_text = "当前没有可继续的已挂起任务。"
+            await self.direct_replies.record_static_reply(
+                session=session,
+                user_text=text,
+                response_text=response_text,
+                user_session_id=user_session.user_session_id,
+                route=route,
+                task_id=session.active_task_id or "",
+                runtime_refs=runtime_refs,
+                metadata={"reason": "no_paused_task_to_resume"},
+            )
+            return DispatchExecutionResult(
+                session=session,
+                refreshed=session,
+                active_task=None,
+                task_plan=task_plan,
+                run_id=session.active_run_id or "",
+                task_brief_version=current_version,
+                kernel_response=response_text,
+                reason="no_paused_task_to_resume",
+                task_action="respond_from_kernel",
+            )
+
+        active_task = task_plan.active_task
+        await self.lifecycle.activate_run(
+            session,
+            run_id=run_id,
+            active_task_id=task_plan.active_task_id,
+            last_paused_task_id=task_plan.last_paused_task_id,
+            user_message=text,
+        )
+
+        event = None
+        if task_plan.should_submit_message:
+            event = await self.lifecycle.submit_user_message(session.kernel_session_id, text)
+
+        refreshed = await self.store.get_session(session.kernel_session_id)
+        refreshed_version = await self.task_brief_version_for_session(refreshed or session)
+
+        if task_plan.task_action == "continue_active_task":
+            active_task = await self.task_switches.refresh_active_task_from_kernel_state(
+                refreshed,
+                run_id=run_id,
+                user_session_id=user_session.user_session_id,
+                agent_id=agent_id,
+                task_brief_version=refreshed_version,
+            )
+        elif task_plan.should_submit_message:
+            active_task = await self.lifecycle.create_task_from_user_message(
+                session.kernel_session_id,
+                text=text,
+                run_id=run_id,
+                event=event,
+                session_status=refreshed.status.value if refreshed else "running",
+            )
+            refreshed = await self.store.get_session(session.kernel_session_id)
+            refreshed_version = await self.task_brief_version_for_session(refreshed or session)
+            await self.task_switches.sync_global_task(
+                active_task,
+                user_session_id=user_session.user_session_id,
+                agent_id=agent_id,
+                task_brief_version=refreshed_version,
+            )
+
+        thinker_dispatch = None
+        if active_task:
+            thinker_dispatch = await self.thinker_dispatches.create_for_user_message(
+                session=session,
+                task=active_task,
+                run_id=run_id,
+                task_brief_version=refreshed_version,
+                dispatch_type=task_plan.task_action or task_plan.action,
+                user_text=text,
+                action=task_plan.action,
+                task_action=task_plan.task_action,
+                route=route,
+                user_session_id=user_session.user_session_id,
+                resume_context=task_plan.resume_context,
+                runtime_refs=runtime_refs,
+            )
+
+        return DispatchExecutionResult(
+            session=session,
+            refreshed=refreshed,
+            active_task=active_task,
+            task_plan=task_plan,
+            run_id=run_id,
+            task_brief_version=refreshed_version,
+            thinker_dispatch=thinker_dispatch,
+            reason=task_plan.reason,
+            task_action=task_plan.task_action,
+            resume_context=task_plan.resume_context,
+        )

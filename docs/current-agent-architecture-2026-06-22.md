@@ -377,3 +377,30 @@ Thinker 负责真实执行
 - 用户消息进来后，KMS 先做“准备判断”，再决定是否直接由 Kernel 回答、澄清、继续、恢复、打断或创建 thinker dispatch。
 - Hermes Gateway 的工具事件、推理摘要、原始结果、任务完成/失败仍从原入口发出，但底层统一走 `kernel_dispatch` helper。
 - 调度逻辑没有下沉到 Kernel，符合架构设计文档。
+## 16. 2026-06-23 DispatchExecution 拆分
+
+本轮继续把 `KmsManager` 从“大函数总管”改成“薄总控”。
+
+新增模块：
+
+| 模块 | 位置 | 职责 |
+|---|---|---|
+| `DispatchExecutionCoordinator` | KMS 层 | 创建/激活 run，提交用户消息，创建/同步 task，创建 thinker dispatch |
+
+当前主流程变成：
+
+```text
+Hermes 收到用户消息
+-> KMS DispatchPreparation 先判断用户意图和任务路由
+-> KmsManager 选择分支
+-> 如果需要 Thinker，交给 DispatchExecution 执行调度
+-> Kernel 只接收事件和状态更新
+-> Hermes/Thinker claim dispatch 并执行
+```
+
+这一步没有改变架构边界：
+
+- KMS 仍然负责调度。
+- Kernel 仍然负责状态和视图。
+- Thinker 仍然负责执行。
+- Talker/Observer 仍然读取 KMS/Kernel 给出的可见结果。

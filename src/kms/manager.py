@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
 from src.kms.dispatch_decision import (
@@ -11,6 +11,7 @@ from src.kms.dispatch_decision import (
     kernel_response_decision,
     thinker_run_decision,
 )
+from src.kms.dispatch_execution import DispatchExecutionCoordinator
 from src.kms.dispatch_lifecycle_coordinator import DispatchLifecycleCoordinator
 from src.kms.dispatch_preparation import DispatchPreparationCoordinator
 from src.kms.kernel_direct_reply_coordinator import KernelDirectReplyCoordinator
@@ -57,6 +58,15 @@ class KmsManager:
             self.direct_responder,
             self.conversation_refs,
         )
+        self.dispatch_execution = DispatchExecutionCoordinator(
+            store=store,
+            sessions=self.sessions,
+            lifecycle=self.lifecycle,
+            task_dispatch_planner=self.task_dispatch_planner,
+            task_switches=self.task_switches,
+            thinker_dispatches=self.thinker_dispatches,
+            direct_replies=self.direct_replies,
+        )
         self.enable_llm_router = (
             os.getenv("KMS_ENABLE_LLM_ROUTER") == "1"
             if enable_llm_router is None
@@ -77,15 +87,10 @@ class KmsManager:
         *,
         increment: int = 0,
     ) -> int:
-        if session is None:
-            return increment
-        task_brief = await self.store.get_task_brief(session.kernel_session_id)
-        version = (
-            task_brief.task_brief_version
-            if task_brief and task_brief.task_brief_version
-            else session.intent_version
+        return await self.dispatch_execution.task_brief_version_for_session(
+            session,
+            increment=increment,
         )
-        return version + increment
 
     async def dispatch_user_message(
         self,
@@ -172,8 +177,13 @@ class KmsManager:
                 route_decision=route.routing_decision,
             )
 
-        session, created_session = await self.sessions.get_or_create_session(
-            session,
+        execution = await self.dispatch_execution.execute(
+            text=text,
+            session=session,
+            route=route,
+            route_target_task=route_target_task,
+            flags=flags,
+            user_session=user_session,
             agent_id=agent_id,
             runtime_id=runtime_id,
             runtime_session_id=runtime_session_id,
@@ -182,137 +192,42 @@ class KmsManager:
             external_workspace_id=external_workspace_id,
             external_issue_id=external_issue_id,
             external_task_id=external_task_id,
+            runtime_refs=runtime_refs,
         )
 
-        run_id = self.lifecycle.new_run_id()
-        previous_run_id = session.active_run_id or ""
-        event = None
-        current_task_brief_version = await self._task_brief_version_for_session(session)
-        next_task_brief_version = current_task_brief_version + 1
-
-        task_plan = await self.task_dispatch_planner.plan(
-            session=session,
-            created_session=created_session,
-            route=route,
-            route_target_task=route_target_task,
-            explicit_new_task_requested=flags.explicit_new_task_requested,
-            wants_new_task=flags.wants_new_task,
-            wants_resume=flags.wants_resume,
-            wants_same_task_steer=flags.wants_same_task_steer,
-            previous_run_id=previous_run_id,
-            run_id=run_id,
-            current_task_brief_version=current_task_brief_version,
-            next_task_brief_version=next_task_brief_version,
-            user_session_id=user_session.user_session_id,
-            agent_id=agent_id,
-        )
-        if task_plan.no_resume_task:
-            response_text = "当前没有可继续的已挂起任务。"
-            await self.direct_replies.record_static_reply(
-                session=session,
-                user_text=text,
-                response_text=response_text,
-                user_session_id=user_session.user_session_id,
-                route=route,
-                task_id=session.active_task_id or "",
-                runtime_refs=runtime_refs,
-                metadata={
-                    "reason": "no_paused_task_to_resume",
-                },
-            )
+        if execution.kernel_response:
             return kernel_response_decision(
-                kernel_session_id=session.kernel_session_id,
-                intent_version=current_task_brief_version,
-                run_id=session.active_run_id or "",
-                session_status=session.status.value,
-                reason="no_paused_task_to_resume",
-                task_action="respond_from_kernel",
-                task_id=session.active_task_id or "",
-                kernel_response=response_text,
+                kernel_session_id=execution.session.kernel_session_id,
+                intent_version=execution.task_brief_version,
+                run_id=execution.run_id,
+                session_status=execution.session.status.value,
+                reason=execution.reason,
+                task_action=execution.task_action,
+                task_id=execution.session.active_task_id or "",
+                kernel_response=execution.kernel_response,
                 user_session_id=user_session.user_session_id,
                 route_decision=route.routing_decision,
             )
 
-        active_task = task_plan.active_task
-        action = task_plan.action
-        task_action = task_plan.task_action
-        active_task_id = task_plan.active_task_id
-        last_paused_task_id = task_plan.last_paused_task_id
-        should_submit_message = task_plan.should_submit_message
-        resume_context: Dict[str, Any] = task_plan.resume_context
-        reason = task_plan.reason
-
-        await self.lifecycle.activate_run(
-            session,
-            run_id=run_id,
-            active_task_id=active_task_id,
-            last_paused_task_id=last_paused_task_id,
-            user_message=text,
-        )
-
-        if should_submit_message:
-            event = await self.lifecycle.submit_user_message(session.kernel_session_id, text)
-
-        refreshed = await self.store.get_session(session.kernel_session_id)
-        refreshed_task_brief_version = await self._task_brief_version_for_session(
-            refreshed or session,
-        )
-
-        if task_action == "continue_active_task":
-            active_task = await self.task_switches.refresh_active_task_from_kernel_state(
-                refreshed,
-                run_id=run_id,
-                user_session_id=user_session.user_session_id,
-                agent_id=agent_id,
-                task_brief_version=refreshed_task_brief_version,
-            )
-        elif should_submit_message:
-            active_task = await self.lifecycle.create_task_from_user_message(
-                session.kernel_session_id,
-                text=text,
-                run_id=run_id,
-                event=event,
-                session_status=refreshed.status.value if refreshed else "running",
-            )
-            refreshed = await self.store.get_session(session.kernel_session_id)
-            refreshed_task_brief_version = await self._task_brief_version_for_session(
-                refreshed or session,
-            )
-            await self.task_switches.sync_global_task(
-                active_task,
-                user_session_id=user_session.user_session_id,
-                agent_id=agent_id,
-                task_brief_version=refreshed_task_brief_version,
-            )
-
-        thinker_dispatch = None
-        if active_task:
-            thinker_dispatch = await self.thinker_dispatches.create_for_user_message(
-                session=session,
-                task=active_task,
-                run_id=run_id,
-                task_brief_version=refreshed_task_brief_version,
-                dispatch_type=task_action or action,
-                user_text=text,
-                action=action,
-                task_action=task_action,
-                route=route,
-                user_session_id=user_session.user_session_id,
-                resume_context=resume_context,
-                runtime_refs=runtime_refs,
-            )
+        refreshed = execution.refreshed or execution.session
+        active_task = execution.active_task
+        task_plan = execution.task_plan
 
         return thinker_run_decision(
-            action=action,
-            kernel_session_id=session.kernel_session_id,
-            intent_version=refreshed_task_brief_version,
-            run_id=run_id,
+            action=task_plan.action,
+            kernel_session_id=execution.session.kernel_session_id,
+            intent_version=execution.task_brief_version,
+            run_id=execution.run_id,
             session_status=refreshed.status.value if refreshed else "running",
-            reason=reason,
-            task_action=task_action,
+            reason=execution.reason,
+            task_action=execution.task_action,
             task_id=active_task.task_id if active_task else (refreshed.active_task_id if refreshed else ""),
-            resume_context=resume_context,
+            resume_context=execution.resume_context,
             user_session_id=user_session.user_session_id,
             route_decision=route.routing_decision,
-            thinker_dispatch_id=thinker_dispatch.dispatch_id if thinker_dispatch else "",
+            thinker_dispatch_id=(
+                execution.thinker_dispatch.dispatch_id
+                if execution.thinker_dispatch
+                else ""
+            ),
         )
