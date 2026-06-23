@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
 from src.kms.manager import KmsManager
 from src.kms.notification.coordinator import NotificationCoordinator
-from src.kms.state_source_audit import StateSourceAudit
+from src.kms.audit.state_source import StateSourceAudit
 from src.kernel.engine import KernelEngine
 from src.stores.sqlite_store import SqliteStore
 from src.schema.events import EventSubmission

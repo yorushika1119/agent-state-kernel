@@ -538,3 +538,20 @@ src/kms/notification/
 | `notification/coordinator.py` | 根据 dispatch complete / fail 生成通知，并执行去重、节流、优先级策略 |
 
 这一步只是把通知能力独立成包，不改变 SSE/API 行为。
+
+## 23. 2026-06-23 Audit 目录分组
+
+KMS 的状态来源审计模块已经移动到：
+
+```text
+src/kms/audit/
+  state_source.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `audit/state_source.py` | 审计 task-first 新表是否已经能作为主读来源，以及旧表 fallback 是否仍被命中 |
+
+这一步只是把旧表退场前的审计能力独立成包，不改变 `/kms/state-source-audit` API 行为。

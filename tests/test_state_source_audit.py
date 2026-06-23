@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.api import server as api_server
 from src.kernel.engine import KernelEngine
-from src.kms.state_source_audit import StateSourceAudit
+from src.kms.audit.state_source import StateSourceAudit
 from src.stores.sqlite_store import SqliteStore
 
 

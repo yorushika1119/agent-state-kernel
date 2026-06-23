@@ -2133,6 +2133,44 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 79 passed
 ```
 
+## 2026-06-23：KMS audit 目录分组迁移
+
+本阶段继续做结构整理，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/audit/` 子目录。
+- 为什么改：状态来源审计是旧表退场前的检查能力，和用户消息调度、任务路由、通知策略都不是同一类职责。
+- 改完什么样：审计模块独立放在 audit 包里，API 仍通过 `/kms/state-source-audit` 暴露。
+
+移动结果：
+
+| 原位置 | 新位置 |
+|---|---|
+| `src/kms/state_source_audit.py` | `src/kms/audit/state_source.py` |
+
+架构边界审查：
+
+- 仍是 KMS 审计能力。
+- Kernel 不负责判断架构迁移进度。
+- Thinker 不参与状态来源审计。
+- API 行为不变。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider -q tests\test_state_source_audit.py tests\test_state_primary_read_switch.py tests\test_legacy_fallback_audit_report.py tests\test_state_alias_and_thinker_dispatch.py tests\test_manager_observer_views.py
+17 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
+
+说明：
+
+- 不带 `--basetemp` 的第一次运行失败在 pytest `tmp_path` 创建阶段，原因是当前沙箱不能写 `C:\Users\EDY\AppData\Local\Temp\pytest-of-EDY`。
+- 加入项目内临时目录后同一组测试通过，说明不是 audit 迁移导致的代码问题。
+
 ## 2026-06-23：KMS response 目录分组迁移
 
 本阶段继续做结构整理，不改行为。
