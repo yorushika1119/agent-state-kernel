@@ -144,10 +144,10 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-decision-b
 | Task Router 多任务路由 | 75% | 支持常见指代，LLM Router 已接入 |
 | Kernel 直接回答状态问题 | 80% | progress / evidence / failures / claims / todos 已支持 |
 | User Session 多任务管理 | 80% | user_sessions / global_tasks / conversation refs 已有 |
-| Observer / Manager / Notification | 65% | API / SSE / policy 第一版可用 |
+| Observer / Manager / Notification | 75% | API / SSE / WebSocket / policy 第一版可用，连续失败升级已补 |
 | 新状态表迁移 | 90% | 新表主读，写入代码已切到新表 |
 | 旧表退场 | 88% | 写入代码已移除，读取 fallback 已审计，removal-check/drop 工具有了，真实库物理删表未执行 |
-| 测试体系 | 80% | fast / core / integration / full 已分层 |
+| 测试体系 | 85% | fast / core / integration / full 已分层，新表-only 覆盖扩到 109 条 |
 
 当前没有发现完成不了的硬阻塞。剩下主要是收尾、加固和产品化。
 
@@ -155,11 +155,11 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-decision-b
 
 | 下一步 | 原因 |
 |---|---|
-| 扩大新表-only integration / real smoke | 目前主链路 58 条通过，还要覆盖真实 Hermes/真实 DB |
-| 继续拆 `KmsManager` 主流程 | dispatch decision 和 task dispatch planner 已拆出，但主流程仍可继续分段 |
-| Runtime Event Adapter 深度接 Hermes | 工具/summary/raw result 方法已有，真实 Hermes 共享 helper 已补，gateway 主流程还可继续逐步接入 |
-| Observer notification WebSocket | SSE 第一版有了，WebSocket 未做 |
-| Notification 高级策略 | 当前只是第一版，复杂升级/优先级还可增强 |
+| 扩大新表-only integration / real smoke | 新表-only 已扩到 109 条，后续还要继续覆盖真实 DB 的长期运行场景 |
+| 继续拆 `KmsManager` 主流程 | dispatch decision、task dispatch planner、component wiring 已拆出，但主流程仍可继续分段 |
+| Runtime Event Adapter 深度接 Hermes | 工具/summary/raw result/action blocked 方法已有，gateway 主流程还可继续逐步接入 |
+| Observer notification 推送产品化 | SSE / WebSocket 第一版有了，后续还要补连接管理和前端消费示例 |
+| Notification 高级策略 | 连续失败升级已有，后续还可补更细的去重、节流、优先级规则 |
 | 旧表物理删除 | 工具有了，最后阶段再对真实库执行 |
 
 ## 8. 测试策略
@@ -178,7 +178,7 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-decision-b
 | smoke | 命令 |
 |---|---|
 | LLM Router | `python scripts/live_llm_router_smoke.py` |
-| Hermes interrupt | `python scripts/live_interrupt_demo.py --real-model --scenario interrupt` |
+| Hermes interrupt | `python scripts/live_tool_interrupt_smoke.py` |
 
 ## 9. 协作偏好
 
@@ -220,5 +220,36 @@ legacy_state_fallback_audits
 
 - 暂时不要直接删除真实库旧表。
 - 继续保留 fallback 审计。
-- 继续扩大新表-only 模式测试覆盖，再考虑真实库物理删除。
-- 下一步优先继续拆 `KmsManager` 主流程，或开始让真实 Gateway 工具回调逐步调用新的 kernel dispatch helper。
+- 继续拆 `KmsManager` 主流程中剩余的编排细节。
+- 让真实 Gateway 工具回调逐步调用新的 kernel dispatch helper。
+- 补真实 DB 长时间运行后的旧表 removal-check 复核，再考虑物理删表。
+
+## 11. 2026-06-23 本轮收尾状态
+
+本轮继续沿着新版架构文档推进，没有改变核心分层：
+
+| 本轮事项 | 当前结果 |
+|---|---|
+| 新表-only 主链路覆盖 | `scripts/test_new_table_only.py` 扩到 109 条，通过 |
+| 真实 LLM Router smoke | 在 `KERNEL_CREATE_LEGACY_STATE_TABLES=0` 下通过 |
+| 真实 Hermes tool interrupt smoke | 在 `KERNEL_CREATE_LEGACY_STATE_TABLES=0` 下通过，旧 dispatch failed，新 dispatch completed |
+| KmsManager 拆分 | component wiring 已拆到 `src/kms/manager_components.py` |
+| Runtime ActionBlocked | 项目内 adapter 和真实 Hermes helper 均已支持 |
+| Observer/Talker 推送 | Notification WebSocket 第一版已支持 |
+| Notification 策略 | 同 task 第三次 `task_failed` 会升级为 urgent/critical |
+
+最终验证记录：
+
+```text
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-final-core -p no:cacheprovider
+83 passed
+
+python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-final-new-table-only -p no:cacheprovider
+109 passed
+```
+
+当前判断：
+
+- 没有发现偏离架构设计文档。
+- 没有发现完成不了的硬阻塞。
+- 剩余主要是继续收敛 KMS 主流程、补真实 Gateway 更深接入、最后评估真实库旧表物理删除。

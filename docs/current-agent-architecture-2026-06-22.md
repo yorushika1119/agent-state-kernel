@@ -906,3 +906,120 @@ src/kms/dispatch/decision.py
 | `dispatch.decision` | 把 execution result 转成 `DispatchDecision` |
 
 架构边界不变：KMS 仍负责调度决策；Thinker 只消费 dispatch；Kernel 只保存状态。
+
+## 42. 2026-06-23 新表-only 覆盖扩展
+
+`scripts/test_new_table_only.py` 已从第一版主链路 smoke 扩展为更完整的新表-only 回归入口。
+
+通俗说明：
+
+- 改哪里：扩展新表-only 测试脚本覆盖范围。
+- 为什么改：最终架构要求状态主线迁到 `task_brief/task_flow/claim/todo` 新表，不能只靠旧表兼容来证明系统可用。
+- 改完什么样：在 `KERNEL_CREATE_LEGACY_STATE_TABLES=0` 时，更多 KMS / Kernel / dispatch / observer / interrupt 链路都能在没有旧状态表的情况下运行。
+
+验证结果：
+
+```text
+python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-final-new-table-only -p no:cacheprovider
+109 passed
+```
+
+架构边界不变：旧状态表仍保留兼容和真实库迁移缓冲，但新功能验证开始优先走新表。
+
+## 43. 2026-06-23 KmsManager 组件装配拆分
+
+`KmsManager.__init__()` 里的组件创建逻辑已移动到：
+
+```text
+src/kms/manager_components.py
+```
+
+通俗说明：
+
+- 改哪里：把 `KmsManager` 构造时的一长串 coordinator 初始化挪出去。
+- 为什么改：`KmsManager` 应该负责串联调度流程，不应该越来越像“所有对象的大杂烩工厂”。
+- 改完什么样：manager 仍保留原来的公开属性，旧调用不受影响；但组件装配可以单独测试和继续拆分。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-manager-components -p no:cacheprovider -q tests\test_kms_manager_components.py tests\test_dispatch_execution.py tests\test_dispatch_preparation.py tests\test_manager_observer_views.py tests\test_smoke_interrupt.py
+17 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-manager-components-core -p no:cacheprovider
+81 passed
+```
+
+架构边界不变：这只是 KMS 内部装配拆分，没有把 Kernel 状态职责或 Thinker 执行职责挪进 KMS。
+
+## 44. 2026-06-23 Runtime ActionBlocked 事件入口
+
+Runtime Event Adapter 已新增：
+
+```text
+RuntimeEventAdapter.submit_action_blocked(...)
+```
+
+真实 Hermes 部署目录也补了同名 helper：
+
+```text
+C:\Users\EDY\AppData\Local\hermes\hermes-agent\hermes_cli\kernel_dispatch.py
+```
+
+通俗说明：
+
+- 改哪里：补一个“动作被阻止/中断”的标准上报入口。
+- 为什么改：打断旧任务时，不应该只靠外部描述；Runtime/Hermes 需要能把 blocked 这类执行事件按统一格式交给 Kernel。
+- 改完什么样：工具开始、完成、失败、被阻止都可以走统一 runtime event 入口。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-runtime-adapter -p no:cacheprovider -q tests\test_runtime_event_adapter.py tests\test_pipeline_event_flow.py
+22 passed
+
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python -m pytest -o addopts='' -q tests\hermes_cli\test_kernel_dispatch.py
+5 passed
+```
+
+架构边界不变：Hermes 仍只上报执行事件；事件如何落状态仍由 Kernel/KMS 管线处理。
+
+## 45. 2026-06-23 Observer / Talker Notification WebSocket
+
+通知接口在原有 list / ack / SSE 基础上新增：
+
+```text
+/kms/observer/notifications/ws
+/kms/talker/notifications/ws
+```
+
+通俗说明：
+
+- 改哪里：给 Observer 和 Talker 的通知增加 WebSocket 订阅入口。
+- 为什么改：Observer/Talker 是外部展示层，只靠轮询或 SSE 不够灵活；WebSocket 更适合实时界面。
+- 改完什么样：外部 UI 可以通过 WebSocket 收到 pending notification，不必频繁请求列表接口。
+
+架构边界不变：通知仍由 KMS 生成和管理；Observer/Talker 只消费通知，不直接改 Kernel 状态。
+
+## 46. 2026-06-23 Notification 失败升级策略
+
+`NotificationCoordinator` 已加入第一版失败升级策略。
+
+通俗说明：
+
+- 改哪里：同一个 task 连续第三次 `task_failed` 时，通知优先级会升级。
+- 为什么改：普通失败可以排队提醒，但连续失败通常需要更明显地打扰用户。
+- 改完什么样：第三次失败会变成 `urgency=critical`、`priority=urgent`、`interrupt_user=True`。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-notifications-ws -p no:cacheprovider -q tests\test_notification_coordinator.py tests\test_observer_notifications.py tests\test_runtime_event_adapter.py
+18 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-final-core -p no:cacheprovider
+83 passed
+```
+
+架构边界不变：KMS 负责通知策略；Kernel/Store 只保存通知记录；Talker/Observer 只展示。

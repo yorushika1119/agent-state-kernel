@@ -2853,3 +2853,69 @@ python -m pytest -o addopts='' -q tests\test_kernel_direct_reply_coordinator.py 
 python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
 79 passed
 ```
+
+## 2026-06-23：新表-only 覆盖、通知推送与 KmsManager 装配拆分
+
+本阶段继续按新版架构文档做“渐进式换骨”，没有推倒重写。
+
+通俗说明：
+
+- 改哪里：扩展新表-only 测试、拆 `KmsManager` 组件装配、补 Runtime `ActionBlocked` 事件、补 Observer/Talker WebSocket 通知、补连续失败升级策略。
+- 为什么改：新版架构要求 KMS 负责调度和通知，Kernel 负责状态，Hermes/Thinker 只执行和上报。前几轮骨架已经能跑，这一轮是在把真实链路和验证补厚。
+- 改完什么样：没有旧状态表时，更多主链路测试仍能通过；外部展示层可以用 WebSocket 收通知；Hermes 可以用统一 helper 上报动作被阻止；`KmsManager` 更少承担对象装配细节。
+
+完成内容：
+
+| 事项 | 结果 |
+|---|---|
+| 新表-only 测试扩展 | `scripts/test_new_table_only.py` 覆盖扩到 109 条 |
+| KmsManager 组件装配拆分 | 新增 `src/kms/manager_components.py` |
+| Runtime ActionBlocked | `RuntimeEventAdapter.submit_action_blocked(...)` 已支持 |
+| 真实 Hermes helper | `hermes_cli/kernel_dispatch.py` 已补 `submit_action_blocked(...)` |
+| Observer/Talker WebSocket | 新增 `/kms/observer/notifications/ws` 和 `/kms/talker/notifications/ws` |
+| Notification 失败升级 | 同 task 第三次 `task_failed` 升级为 urgent/critical |
+
+架构边界审查：
+
+| 边界 | 当前判断 |
+|---|---|
+| KMS | 仍负责路由、调度、dispatch 生命周期、通知策略 |
+| Kernel/Store | 仍负责状态、事件、通知记录持久化 |
+| Thinker/Hermes | 仍只执行 dispatch 并上报 runtime event |
+| Talker/Observer | 仍只提交用户消息和消费回复/通知 |
+
+验证结果：
+
+```text
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-final-core -p no:cacheprovider
+83 passed
+
+python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-final-new-table-only -p no:cacheprovider
+109 passed
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-notifications-ws -p no:cacheprovider -q tests\test_notification_coordinator.py tests\test_observer_notifications.py tests\test_runtime_event_adapter.py
+18 passed
+
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python -m pytest -o addopts='' -q tests\hermes_cli\test_kernel_dispatch.py
+5 passed
+```
+
+真实 smoke 结果：
+
+```text
+KERNEL_CREATE_LEGACY_STATE_TABLES=0 python scripts\live_llm_router_smoke.py
+passed
+
+KERNEL_CREATE_LEGACY_STATE_TABLES=0 python scripts\live_tool_interrupt_smoke.py
+passed
+```
+
+未完成但不阻塞的事项：
+
+| 后续事项 | 原因 |
+|---|---|
+| 继续拆 `KmsManager` 主流程 | 当前已拆装配，但 dispatch 主流程仍可继续变薄 |
+| 真实 Gateway 更深接入 runtime helper | helper 已有，主流程调用点还可继续补 |
+| Notification 策略产品化 | 现在只有第一版升级规则，后续可补更多去重/节流/优先级 |
+| 真实库旧表物理删除 | 工具已有，但真实库还需要备份和 removal-check 复核 |
