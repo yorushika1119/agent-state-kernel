@@ -2135,6 +2135,43 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 79 passed
 ```
 
+## 2026-06-23：KMS pipeline state alias 拆分
+
+本阶段开始拆 `pipeline.py` 内部小块，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/state/aliases.py`。
+- 为什么改：`pipeline.py` 里开头有一组“新表状态转换成旧 reducer 可识别对象”的函数，它们不是主流程，适合单独放出来。
+- 改完什么样：`pipeline.py` 继续负责 9 阶段事件处理，但状态适配细节放到 `state/aliases.py`。
+
+移动结果：
+
+| 原函数 | 新位置 |
+|---|---|
+| `_intent_from_task_brief` | `src/kms/state/aliases.py::intent_from_task_brief` |
+| `_plan_from_task_flow` | `src/kms/state/aliases.py::plan_from_task_flow` |
+| `_beliefs_from_claims` | `src/kms/state/aliases.py::beliefs_from_claims` |
+| `_commitments_from_todos` | `src/kms/state/aliases.py::commitments_from_todos` |
+
+架构边界审查：
+
+- 仍是 KMS pipeline 内部适配层。
+- Kernel 仍是状态事实来源。
+- reducer 复用方式不变。
+
+验证结果：
+
+```text
+python -m py_compile src\kms\pipeline.py src\kms\state\aliases.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider -q tests\test_pipeline_event_flow.py tests\test_state_primary_read_switch.py tests\test_state_alias_and_thinker_dispatch.py tests\test_manager_observer_views.py tests\test_smoke_interrupt.py
+37 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
+
 ## 2026-06-23：KMS notification 目录分组迁移
 
 本阶段继续做结构整理，不改行为。

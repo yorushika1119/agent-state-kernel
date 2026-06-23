@@ -618,3 +618,20 @@ src/kms/transport/
 | `transport/remote.py` | Kernel 远程调用 KMS service 的 HTTP client |
 
 这一步只整理 KMS 的通信边界，不改变 `KMS_MODE=remote` 或 `KMS_URL` 的行为。
+
+## 27. 2026-06-23 Pipeline State Alias 拆分
+
+KMS pipeline 内部的 task-first 状态适配函数已经移动到：
+
+```text
+src/kms/state/
+  aliases.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `state/aliases.py` | 把 `task_brief/task_flow/claim/todo` 转成现有 reducer 可复用的对象形状 |
+
+这一步不是让 KMS 接管 Kernel 状态，而是把 pipeline 内部的兼容适配从主流程里拆出来。

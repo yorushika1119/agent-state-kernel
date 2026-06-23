@@ -35,6 +35,12 @@ from src.kernel.state_reducer import (
     synthesize_progress,
 )
 from src.kms.decisioning.model import DEEPSEEK_API_KEY
+from src.kms.state.aliases import (
+    beliefs_from_claims,
+    commitments_from_todos,
+    intent_from_task_brief,
+    plan_from_task_flow,
+)
 from src.schema.events import (
     Actor,
     CognitiveEvent,
@@ -46,75 +52,14 @@ from src.schema.events import (
 from src.schema.state import (
     BeliefItem,
     BeliefStatus,
-    Commitment,
     EvidenceItem,
     ExecutionAction,
-    IntentState,
-    PlanStep,
-    PlanState,
     ProgressState,
     RuntimeReference,
     SyncView,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _intent_from_task_brief(task_brief: Any) -> Optional[IntentState]:
-    if not task_brief:
-        return None
-    return IntentState(
-        intent_version=task_brief.task_brief_version,
-        goal=task_brief.goal,
-        output_format=task_brief.output_format,
-        constraints=task_brief.constraints,
-        priority=task_brief.priority,
-        cancelled=task_brief.cancelled,
-        last_user_update_at=task_brief.updated_at,
-    )
-
-
-def _plan_from_task_flow(task_flow: Any) -> Optional[PlanState]:
-    if not task_flow:
-        return None
-    return PlanState(
-        plan_id=task_flow.flow_id,
-        status=task_flow.status,
-        steps=[PlanStep(**step) for step in task_flow.steps],
-        current_step=task_flow.current_step,
-        intent_version=task_flow.task_brief_version,
-    )
-
-
-def _beliefs_from_claims(claims: list[Any]) -> list[BeliefItem]:
-    return [
-        BeliefItem(
-            belief_id=claim.claim_id,
-            claim=claim.claim,
-            status=claim.status,
-            confidence=claim.confidence,
-            supporting_evidence=claim.supporting_evidence,
-            conflicting_evidence=claim.conflicting_evidence,
-            visibility=claim.visibility,
-            last_verified_at=claim.last_verified_at,
-        )
-        for claim in claims
-    ]
-
-
-def _commitments_from_todos(todos: list[Any]) -> list[Commitment]:
-    return [
-        Commitment(
-            commitment_id=todo.obligation_id,
-            statement=todo.statement,
-            created_by=todo.created_by,
-            status=todo.status,
-            requires_confirmation=todo.requires_confirmation,
-            related_intent_version=todo.related_task_brief_version,
-            resolved_at=todo.resolved_at,
-        )
-        for todo in todos
-    ]
 
 
 # ===========================================================================
@@ -835,7 +780,7 @@ async def reduce(
     # ── 1. 意图 ──
     # INTENT_UPDATED：更新 goal、constraints、版本号
     # SESSION_CANCELLED：标记已取消
-    current_intent = _intent_from_task_brief(await store.get_task_brief(session_id))
+    current_intent = intent_from_task_brief(await store.get_task_brief(session_id))
     old_goal = current_intent.goal if current_intent else ""
     old_version = current_intent.intent_version if current_intent else 0
     new_intent = reduce_intent(current_intent, et, payload)
@@ -861,7 +806,7 @@ async def reduce(
     # ── 2. 计划 ──
     # PLAN_ACCEPTED：创建/替换计划
     # STEP_STARTED/TASK_COMPLETED：更新步骤状态
-    current_plan = _plan_from_task_flow(await store.get_task_flow(session_id))
+    current_plan = plan_from_task_flow(await store.get_task_flow(session_id))
     new_plan = reduce_plan(current_plan, et, payload)
     if et in (
         EventType.PLAN_ACCEPTED,
@@ -892,7 +837,7 @@ async def reduce(
     # BELIEF_UPDATED：创建或更新信念
     # CONFLICT_DETECTED：标记为 CONFLICTING
     # VERIFICATION_WARNING：降低置信度
-    beliefs = _beliefs_from_claims(await store.get_claim_items(session_id))
+    beliefs = beliefs_from_claims(await store.get_claim_items(session_id))
     reduce_beliefs(beliefs, et, payload)
     if et in (EventType.BELIEF_UPDATED, EventType.CONFLICT_DETECTED,
               EventType.VERIFICATION_WARNING_RAISED, EventType.RISK_ASSESSMENT,
@@ -931,7 +876,7 @@ async def reduce(
 
     # ── 6. 承诺 ──
     # COMMITMENT_CREATED/UPDATED：Talker 承诺管理
-    commitments = _commitments_from_todos(await store.get_todo_obligations(session_id))
+    commitments = commitments_from_todos(await store.get_todo_obligations(session_id))
     reduce_commitments(commitments, et, payload)
     if et in (EventType.COMMITMENT_CREATED, EventType.COMMITMENT_UPDATED):
         cid = payload.get("commitment_id", "")
@@ -947,9 +892,9 @@ async def reduce(
 
 async def refresh_progress(store, session_id: str) -> ProgressState:
     """同步刷新 progress_states，供 Gate/Sync/Thinker 直接读取。"""
-    plan = _plan_from_task_flow(await store.get_task_flow(session_id))
-    beliefs = _beliefs_from_claims(await store.get_claim_items(session_id))
-    intent = _intent_from_task_brief(await store.get_task_brief(session_id))
+    plan = plan_from_task_flow(await store.get_task_flow(session_id))
+    beliefs = beliefs_from_claims(await store.get_claim_items(session_id))
+    intent = intent_from_task_brief(await store.get_task_brief(session_id))
     constraints = intent.constraints if intent else []
     progress = synthesize_progress(session_id, plan, beliefs, constraints)
     await store.save_progress(session_id, progress)
@@ -1069,7 +1014,7 @@ async def gate(store, session_id: str, proposed_message: str = "") -> GateResult
 
     # ── 第 2 层：语义检查（DeepSeek）──
     # 检查消息语义上是否与已验证信念矛盾
-    beliefs = _beliefs_from_claims(await store.get_claim_items(session_id))
+    beliefs = beliefs_from_claims(await store.get_claim_items(session_id))
     contradicted = _rule_contradicts_verified_belief(beliefs, proposed_message)
     if contradicted:
         return GateResult(
@@ -1115,8 +1060,8 @@ async def sync(store, session_id: str) -> Optional[SyncView]:
     """
     progress = await summarize(store, session_id)
     session = await store.get_session(session_id)
-    intent = _intent_from_task_brief(await store.get_task_brief(session_id))
-    commitments = _commitments_from_todos(await store.get_todo_obligations(session_id))
+    intent = intent_from_task_brief(await store.get_task_brief(session_id))
+    commitments = commitments_from_todos(await store.get_todo_obligations(session_id))
     executions = await store.get_executions(session_id)
     if not progress or not session:
         return None
@@ -1210,7 +1155,7 @@ async def run_pipeline(
 
     # ── ③ Validate：验证 ──
     # 权限检查、输入完整性、版本检查
-    current_intent = _intent_from_task_brief(await store.get_task_brief(session_id))
+    current_intent = intent_from_task_brief(await store.get_task_brief(session_id))
     existing_version = current_intent.intent_version if current_intent else 0
     session = await store.get_session(session_id)
     val_result = validate(
@@ -1246,7 +1191,7 @@ async def run_pipeline(
         primary_event = _build_final_event(event)
     if _should_arbitrate(primary_event.event_type):
         existing_evidence = await store.get_evidence(session_id)
-        existing_beliefs = _beliefs_from_claims(await store.get_claim_items(session_id))
+        existing_beliefs = beliefs_from_claims(await store.get_claim_items(session_id))
         arb_result = await arbitrate(primary_event, existing_evidence, existing_beliefs, kms_url)
 
         for key, val in arb_result.modifications.items():
