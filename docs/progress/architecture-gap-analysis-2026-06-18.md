@@ -2100,6 +2100,44 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 79 passed
 ```
 
+## 2026-06-23：KMS Arbitrate stage 拆分
+
+本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/pipeline_stages/arbitrate.py`。
+- 为什么改：Arbitrate 是独立阶段，负责 candidate/proposal 提升和 judge 仲裁。
+- 改完什么样：`pipeline.py` 继续编排阶段，但仲裁实现放在单独 stage 文件里。
+
+移动结果：
+
+| 原内容 | 新位置 |
+|---|---|
+| `ArbitrateResult` | `src/kms/pipeline_stages/arbitrate.py` |
+| `arbitrate` | `src/kms/pipeline_stages/arbitrate.py` |
+| `is_candidate_event` | `src/kms/pipeline_stages/arbitrate.py` |
+| `_should_arbitrate` | `src/kms/pipeline_stages/arbitrate.py::should_arbitrate` |
+| `_build_final_event` | `src/kms/pipeline_stages/arbitrate.py::build_final_event` |
+
+架构边界审查：
+
+- 仍是 KMS pipeline 的 Arbitrate 阶段。
+- Kernel 不运行 judge 仲裁逻辑。
+- candidate 到 accepted 的提升仍由 KMS 负责。
+
+验证结果：
+
+```text
+python -m py_compile src\kms\pipeline.py src\kms\pipeline_stages\arbitrate.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider -q tests\test_pipeline_event_flow.py tests\test_missing_coverage.py tests\test_smoke_interrupt.py
+35 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
+
 ## 2026-06-23：KMS Classify stage 拆分
 
 本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。

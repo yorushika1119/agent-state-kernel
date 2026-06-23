@@ -35,6 +35,13 @@ from src.kernel.state_reducer import (
     synthesize_progress,
 )
 from src.kms.decisioning.model import DEEPSEEK_API_KEY
+from src.kms.pipeline_stages.arbitrate import (
+    ArbitrateResult,
+    arbitrate,
+    build_final_event,
+    is_candidate_event,
+    should_arbitrate,
+)
 from src.kms.pipeline_stages.classify import ClassifyResult, classify
 from src.kms.pipeline_stages.normalize import NormalizeResult, normalize
 from src.kms.pipeline_stages.validate import ValidateResult, validate
@@ -54,9 +61,7 @@ from src.schema.events import (
     Visibility,
 )
 from src.schema.state import (
-    BeliefItem,
     BeliefStatus,
-    EvidenceItem,
     ExecutionAction,
     ProgressState,
     SyncView,
@@ -89,127 +94,6 @@ def intake(submission: EventSubmission) -> IntakeResult:
     if not submission.request_type:
         return IntakeResult(False, "Missing request_type")
     return IntakeResult(True, submission=submission)
-
-
-CANDIDATE_TO_FINAL_EVENT = {
-    EventType.PLAN_PROPOSED: EventType.PLAN_ACCEPTED,
-    EventType.BELIEF_PROPOSED: EventType.BELIEF_UPDATED,
-    EventType.EVIDENCE_CANDIDATE_FOUND: EventType.EVIDENCE_ACCEPTED,
-}
-
-
-# ===========================================================================
-# 第 5 阶段：Arbitrate — 运行评判器
-# ===========================================================================
-
-@dataclass
-class ArbitrateResult:
-    """Arbitrate 阶段的输出——评判器裁决。"""
-    modifications: Dict[str, Any] = field(default_factory=dict)
-    side_effects: List[CognitiveEvent] = field(default_factory=list)
-    judge_results: List[Dict[str, Any]] = field(default_factory=list)
-    rejected: bool = False
-
-
-async def arbitrate(
-    event: CognitiveEvent,
-    existing_evidence: List[EvidenceItem],
-    existing_beliefs: List[BeliefItem],
-    kms_url: str = "",
-) -> ArbitrateResult:
-    """对事件运行评判器。
-
-    两个模式：
-    内联模式（默认）：加载来自 src.kms.* 的评判器
-    远程模式：POST 到独立的 KMS 服务
-
-    评判器运行顺序：
-    Evidence 事件：ReliabilityJudge → DedupJudge → ConflictJudge
-                 → SemanticConflictJudge → ContentReliabilityJudge
-    Belief 事件：追加 BeliefReviewJudge
-    """
-    if kms_url:
-        # ── 远程 KMS ──
-        # 所有评判器在独立进程中运行，Kernel 只发 HTTP
-        from src.kms.transport.remote import RemoteKMSClient
-        client = RemoteKMSClient(kms_url)
-        results = await client.evaluate(event, existing_evidence, existing_beliefs)
-        mods = client.get_modifications(results)
-        return ArbitrateResult(
-            modifications=mods,
-            side_effects=client.get_side_effects(results),
-            judge_results=results,
-            rejected=client.has_rejections(results),
-        )
-
-    # ── 内联 KMS ──
-    # 评判器在 Kernel 进程内运行，无网络开销
-    from src.kms.decisioning.judges import (
-        ConflictJudge,
-        DedupJudge,
-        KMSPipeline,
-        ReliabilityJudge,
-    )
-    from src.kms.decisioning.model import ContentReliabilityJudge, SemanticConflictJudge, DEEPSEEK_API_KEY
-    from src.kms.decisioning.belief import BeliefReviewJudge
-
-    pipeline = KMSPipeline()
-    # Belief 事件时追加 BeliefReviewJudge ——审查 claim 与证据的一致性
-    if event.event_type == EventType.BELIEF_UPDATED:
-        pipeline.judges.append(BeliefReviewJudge())
-    results = await pipeline.evaluate(event, existing_evidence, existing_beliefs)
-    mods = pipeline.get_modifications(results)
-    side_effects = pipeline.get_side_effects(results)
-
-    judge_output = [
-        {
-            "judge_name": r.judge_name,
-            "verdict": r.verdict,
-            "reason": r.reason,
-        }
-        for r in results
-    ]
-
-    return ArbitrateResult(
-        modifications=mods,
-        side_effects=side_effects,
-        judge_results=judge_output,
-        rejected=any(r.verdict == "reject" for r in results),
-    )
-
-
-def is_candidate_event(event_type: EventType) -> bool:
-    """只有 candidate/proposal 事件会被 KMS 提升为正式事件。"""
-    return event_type in CANDIDATE_TO_FINAL_EVENT
-
-
-def _accepted_event_type(event_type: EventType) -> EventType:
-    return CANDIDATE_TO_FINAL_EVENT[event_type]
-
-
-def _should_arbitrate(event_type: EventType) -> bool:
-    return event_type in (EventType.EVIDENCE_ACCEPTED, EventType.BELIEF_UPDATED)
-
-
-def _build_final_event(source_event: CognitiveEvent) -> CognitiveEvent:
-    """把 Thinker 的 candidate/proposal 提升为 KMS 生成的正式事件。"""
-    final_type = _accepted_event_type(source_event.event_type)
-    payload = dict(source_event.payload)
-    if final_type == EventType.PLAN_ACCEPTED and "intent_version" not in payload:
-        payload["intent_version"] = source_event.intent_version
-
-    return CognitiveEvent(
-        event_id="",
-        kernel_session_id=source_event.kernel_session_id,
-        runtime_session_id=source_event.runtime_session_id,
-        event_type=final_type,
-        actor=Actor.KERNEL_MANAGER,
-        source_component="kms",
-        payload=payload,
-        runtime_refs=source_event.runtime_refs,
-        visibility=source_event.visibility,
-        intent_version=source_event.intent_version,
-    )
 
 
 async def _assign_event_metadata(
@@ -691,8 +575,8 @@ async def run_pipeline(
     # ── ⑤ Arbitrate：proposal/candidate 先提升，再做 KMS 仲裁 ──
     arb_result: ArbitrateResult = ArbitrateResult()
     if is_candidate_event(event.event_type):
-        primary_event = _build_final_event(event)
-    if _should_arbitrate(primary_event.event_type):
+        primary_event = build_final_event(event)
+    if should_arbitrate(primary_event.event_type):
         existing_evidence = await store.get_evidence(session_id)
         existing_beliefs = beliefs_from_claims(await store.get_claim_items(session_id))
         arb_result = await arbitrate(primary_event, existing_evidence, existing_beliefs, kms_url)
