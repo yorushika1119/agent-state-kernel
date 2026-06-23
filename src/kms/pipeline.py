@@ -34,7 +34,7 @@ from src.kernel.state_reducer import (
     reduce_plan,
     synthesize_progress,
 )
-from src.kms.model import DEEPSEEK_API_KEY
+from src.kms.decisioning.model import DEEPSEEK_API_KEY
 from src.schema.events import (
     Actor,
     CognitiveEvent,
@@ -314,7 +314,7 @@ async def _normalize_from_text(submission: EventSubmission, text: str) -> Normal
         return _build_event(submission, EventType.INTENT_UPDATED, {"goal": text})
 
     try:
-        from src.kms.model import ModelCall
+        from src.kms.decisioning.model import ModelCall
         model = ModelCall()
 
         # ── 跟进消息检测 ──
@@ -590,14 +590,14 @@ async def arbitrate(
 
     # ── 内联 KMS ──
     # 评判器在 Kernel 进程内运行，无网络开销
-    from src.kms.judges import (
+    from src.kms.decisioning.judges import (
         ConflictJudge,
         DedupJudge,
         KMSPipeline,
         ReliabilityJudge,
     )
-    from src.kms.model import ContentReliabilityJudge, SemanticConflictJudge, DEEPSEEK_API_KEY
-    from src.kms.belief import BeliefReviewJudge
+    from src.kms.decisioning.model import ContentReliabilityJudge, SemanticConflictJudge, DEEPSEEK_API_KEY
+    from src.kms.decisioning.belief import BeliefReviewJudge
 
     pipeline = KMSPipeline()
     # Belief 事件时追加 BeliefReviewJudge ——审查 claim 与证据的一致性
@@ -968,7 +968,7 @@ async def summarize(store, session_id: str) -> ProgressState:
     # 只有当有信念且 API key 可用时才调用
     if safe_fact_count and DEEPSEEK_API_KEY:
         try:
-            from src.kms.model import ModelCall
+            from src.kms.decisioning.model import ModelCall
             model = ModelCall()
             safe_text = "\n".join(f"- {f}" for f in progress.safe_facts[:5])
             prompt = (
@@ -1080,7 +1080,7 @@ async def gate(store, session_id: str, proposed_message: str = "") -> GateResult
 
     if beliefs and DEEPSEEK_API_KEY:
         try:
-            from src.kms.model import ModelCall
+            from src.kms.decisioning.model import ModelCall
             model = ModelCall()
             belief_text = "\n".join(
                 f"- [{b.status.value}] {b.claim}"

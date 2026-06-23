@@ -10,15 +10,15 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from src.kms.belief import BeliefReviewJudge
-from src.kms.judges import (
+from src.kms.decisioning.belief import BeliefReviewJudge
+from src.kms.decisioning.judges import (
     BaseJudge,
     ConflictJudge,
     DedupJudge,
     JudgeResult,
     ReliabilityJudge,
 )
-from src.kms.model import ContentReliabilityJudge, SemanticConflictJudge
+from src.kms.decisioning.model import ContentReliabilityJudge, SemanticConflictJudge
 
 logger = logging.getLogger(__name__)
 

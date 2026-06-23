@@ -411,7 +411,7 @@ async def llm_route_task_context(
     model_call: Any = None,
 ) -> TaskRouteDecision | None:
     if model_call is None:
-        from src.kms.model import ModelCall
+        from src.kms.decisioning.model import ModelCall
 
         model_call = ModelCall()
 

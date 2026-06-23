@@ -31,7 +31,8 @@
 | `task/scoped_state.py` | task-local 状态过滤 | 保留 | 支撑直接回复和视图 |
 | `audit/state_source.py` | 新旧状态来源审计 | 保留 | 旧表退场前需要 |
 | `pipeline.py` | KMS 事件 pipeline | 保留但偏大 | 后续单独拆，不和 dispatch 混在一起 |
-| `belief.py` / `judges.py` / `model.py` | 评审、模型调用、judge | 保留 | 属于 KMS 判断能力 |
+| `decisioning/intent_classifier.py` | 用户消息意图判断 | 保留 | 属于 KMS 判断能力 |
+| `decisioning/belief.py` / `decisioning/judges.py` / `decisioning/model.py` | 评审、模型调用、judge | 保留 | 属于 KMS 判断能力 |
 | `server.py` / `remote.py` | KMS 服务和远端 client | 保留 | 和 runtime 接口相关 |
 
 ## 不建议现在删除的原因
@@ -74,6 +75,11 @@ src/kms/
     coordinator.py
   audit/
     state_source.py
+  decisioning/
+    intent_classifier.py
+    belief.py
+    judges.py
+    model.py
 ```
 
 ## 可合并候选

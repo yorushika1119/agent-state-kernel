@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from src.kms.judges import BaseJudge, JudgeResult
+from src.kms.decisioning.judges import BaseJudge, JudgeResult
 from src.schema.events import CognitiveEvent, EventType
 from src.schema.state import BeliefItem, EvidenceItem
 

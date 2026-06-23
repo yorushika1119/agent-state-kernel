@@ -2206,6 +2206,42 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 79 passed
 ```
 
+## 2026-06-23：KMS decisioning 目录分组迁移
+
+本阶段继续做结构整理，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/decisioning/` 子目录。
+- 为什么改：用户意图判断、规则 judge、LLM 调用、belief 审查都属于 KMS 的判断工具箱，不应该继续散落在 `src/kms` 根目录。
+- 改完什么样：调度主流程仍在 KMS，但判断辅助能力集中到 decisioning 包里。
+
+移动结果：
+
+| 原位置 | 新位置 |
+|---|---|
+| `src/kms/intent_classifier.py` | `src/kms/decisioning/intent_classifier.py` |
+| `src/kms/belief.py` | `src/kms/decisioning/belief.py` |
+| `src/kms/judges.py` | `src/kms/decisioning/judges.py` |
+| `src/kms/model.py` | `src/kms/decisioning/model.py` |
+
+架构边界审查：
+
+- 仍是 KMS 判断能力。
+- Kernel 不调用 LLM 做任务调度。
+- Thinker 不决定用户消息意图。
+- Router/dispatch 只是调用 decisioning 的结果。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider -q tests\test_intent_classifier.py tests\test_requested_user_scenarios.py tests\test_pipeline_event_flow.py tests\test_task_directory_router.py tests\test_dispatch_preparation.py tests\test_smoke_interrupt.py
+62 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
+
 ## 2026-06-23：KMS response 目录分组迁移
 
 本阶段继续做结构整理，不改行为。

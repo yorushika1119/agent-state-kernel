@@ -302,7 +302,7 @@ class KMSPipeline:
     """
 
     def __init__(self):
-        from src.kms.model import SemanticConflictJudge, ContentReliabilityJudge
+        from src.kms.decisioning.model import SemanticConflictJudge, ContentReliabilityJudge
         self.judges: List[BaseJudge] = [
             ReliabilityJudge(),
             DedupJudge(),

@@ -576,3 +576,26 @@ src/kms/context/
 | `context/dispatch_context.py` | 从 Kernel 状态构造 KMS dispatch 判断所需的上下文快照 |
 
 这一步符合“用户消息先进入 KMS，由 KMS 准备上下文再调度”的设计边界。
+
+## 25. 2026-06-23 Decisioning 目录分组
+
+KMS 的判断和模型调用辅助模块已经移动到：
+
+```text
+src/kms/decisioning/
+  intent_classifier.py
+  belief.py
+  judges.py
+  model.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `decisioning/intent_classifier.py` | 判断用户消息是新任务、继续任务、Kernel 直接回复还是澄清 |
+| `decisioning/judges.py` | 规则型证据、冲突、去重、可靠性判断 |
+| `decisioning/model.py` | DeepSeek/OpenAI-compatible 模型调用和 LLM judge |
+| `decisioning/belief.py` | belief 与证据一致性审查 |
+
+这一步只是把 KMS 的“判断工具箱”集中起来，调度权仍在 `KmsManager` 和 dispatch/routing/task 相关模块。

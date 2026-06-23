@@ -465,7 +465,7 @@ async def llm_classify_dispatch_intent(
     """
 
     if model_call is None:
-        from src.kms.model import ModelCall
+        from src.kms.decisioning.model import ModelCall
 
         model_call = ModelCall()
 

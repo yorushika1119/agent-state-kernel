@@ -940,7 +940,7 @@ async def test_talker_summary_prompt_avoids_unsafe_claims(monkeypatch):
                 return "safe summary sentence"
 
         monkeypatch.setattr(kms_pipeline, "DEEPSEEK_API_KEY", "test-key")
-        monkeypatch.setattr("src.kms.model.ModelCall", lambda: FakeModel())
+        monkeypatch.setattr("src.kms.decisioning.model.ModelCall", lambda: FakeModel())
 
         talker_view = await engine.get_talker_view(sid)
 

@@ -10,9 +10,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import src.kms.manager as kms_manager
+import src.kms.dispatch.preparation as kms_preparation
 from src.kernel.engine import KernelEngine
-from src.kms.intent_classifier import DispatchIntent
+from src.kms.decisioning.intent_classifier import DispatchIntent
 from src.kms.manager import KmsManager
 from src.schema.events import EventSubmission, EventType
 from src.stores.sqlite_store import SqliteStore
@@ -397,7 +397,7 @@ async def test_manager_uses_llm_intent_suggestion_without_letting_it_execute_dir
             )
 
         monkeypatch.setattr(
-            kms_manager,
+            kms_preparation,
             "classify_dispatch_intent_with_llm",
             fake_classifier,
         )
@@ -498,7 +498,7 @@ async def test_manager_passes_loaded_kernel_context_to_classifier(monkeypatch):
             )
 
         monkeypatch.setattr(
-            kms_manager,
+            kms_preparation,
             "classify_dispatch_intent_with_llm",
             fake_classifier,
         )

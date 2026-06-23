@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.kms.intent_classifier import (
+from src.kms.decisioning.intent_classifier import (
     classify_dispatch_intent,
     classify_dispatch_intent_with_llm,
 )

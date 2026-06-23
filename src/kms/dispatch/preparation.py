@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.kms.context.dispatch_context import build_kernel_dispatch_context
-from src.kms.intent_classifier import classify_dispatch_intent_with_llm
+from src.kms.decisioning.intent_classifier import classify_dispatch_intent_with_llm
 
 
 @dataclass
