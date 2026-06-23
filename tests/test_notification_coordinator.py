@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.kms.notification_coordinator import NotificationCoordinator
+from src.kms.notification.coordinator import NotificationCoordinator
 from src.stores.sqlite_store import SqliteStore
 
 

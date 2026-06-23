@@ -27,7 +27,7 @@
 | `response/direct_reply.py` | 记录 Kernel 直接回复 conversation ref | 暂留 | 作为 `DispatchResponseCoordinator` 的底层 helper |
 | `response/clarification.py` | 生成澄清问题并记录引用 | 暂留 | 作为 `DispatchResponseCoordinator` 的底层 helper |
 | `conversation_ref_coordinator.py` | conversation refs 统一写入 | 保留 | 不应分散到多个模块 |
-| `notification_coordinator.py` | observer/talker 通知策略 | 保留 | 独立职责明确 |
+| `notification/coordinator.py` | observer/talker 通知策略 | 保留 | 独立职责明确 |
 | `task/scoped_state.py` | task-local 状态过滤 | 保留 | 支撑直接回复和视图 |
 | `state_source_audit.py` | 新旧状态来源审计 | 保留 | 旧表退场前需要 |
 | `pipeline.py` | KMS 事件 pipeline | 保留但偏大 | 后续单独拆，不和 dispatch 混在一起 |
@@ -97,4 +97,4 @@ src/kms/
 
 ## 下一步建议
 
-`DispatchResponseCoordinator` 已完成，`src/kms/dispatch/`、`src/kms/routing/`、`src/kms/task/` 和 `src/kms/response/` 目录分组也已完成。下一步不要继续增加散落文件，建议观察一轮后再考虑 `notification/` 或 `audit/` 目录分组。
+`DispatchResponseCoordinator` 已完成，`src/kms/dispatch/`、`src/kms/routing/`、`src/kms/task/`、`src/kms/response/` 和 `src/kms/notification/` 目录分组也已完成。下一步不要继续增加散落文件，建议观察一轮后再考虑 `audit/` 目录分组。

@@ -1196,7 +1196,7 @@ pytest
 本阶段把 notification 生成策略从 API 层收敛到 KMS coordinator。
 
 核心变化：
-- 新增 `src/kms/notification_coordinator.py`。
+- 新增 `src/kms/notification/coordinator.py`。
 - API 的 thinker dispatch complete / fail endpoint 不再直接拼 observer notification。
 - `NotificationCoordinator.notify_dispatch_completed()` 负责生成 `task_done` 或 `progress_update`。
 - `NotificationCoordinator.notify_dispatch_failed()` 负责生成 `task_failed`。
@@ -2095,6 +2095,39 @@ python -m pytest -o addopts='' -q tests\test_task_directory_router.py tests\test
 ```text
 python -m pytest -o addopts='' -q tests\test_task_switch_coordinator.py tests\test_dispatch_execution.py tests\test_task_directory_router.py tests\test_smoke_interrupt.py
 29 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
+
+## 2026-06-23：KMS notification 目录分组迁移
+
+本阶段继续做结构整理，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/notification/` 子目录。
+- 为什么改：Observer/Talker 通知策略是 KMS 的独立输出能力，不应该继续散落在 `src/kms` 根目录。
+- 改完什么样：通知生成、去重、节流、优先级策略统一放在 notification 包里。
+
+移动结果：
+
+| 原位置 | 新位置 |
+|---|---|
+| `src/kms/notification_coordinator.py` | `src/kms/notification/coordinator.py` |
+
+架构边界审查：
+
+- 仍是 KMS 通知策略能力。
+- Kernel 不负责主动推送。
+- Thinker 不负责通知策略。
+- Talker/Observer 只消费通知。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' -q tests\test_notification_coordinator.py tests\test_observer_notifications.py tests\test_manager_observer_views.py tests\test_dispatch_lifecycle_coordinator.py tests\test_smoke_interrupt.py
+25 passed
 
 python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
 79 passed

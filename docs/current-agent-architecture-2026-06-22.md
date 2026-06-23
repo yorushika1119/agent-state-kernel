@@ -521,3 +521,20 @@ src/kms/response/
 | `response/clarification.py` | 生成任务路由澄清问题并记录 conversation refs |
 
 这一步只是把 KMS 的直接响应能力集中起来，不改变 `respond_from_kernel` 和 `ask_clarification` 的行为。
+
+## 22. 2026-06-23 Notification 目录分组
+
+KMS 的 Observer / Talker 通知策略模块已经移动到：
+
+```text
+src/kms/notification/
+  coordinator.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `notification/coordinator.py` | 根据 dispatch complete / fail 生成通知，并执行去重、节流、优先级策略 |
+
+这一步只是把通知能力独立成包，不改变 SSE/API 行为。
