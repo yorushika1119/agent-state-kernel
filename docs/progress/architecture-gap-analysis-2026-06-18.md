@@ -2034,3 +2034,33 @@ python -m pytest -o addopts='' -q tests\test_dispatch_response.py tests\test_dis
 python -m pytest -o addopts='' -q tests\test_dispatch_lifecycle_coordinator.py tests\test_thinker_dispatch_coordinator.py tests\test_dispatch_preparation.py tests\test_dispatch_execution.py tests\test_dispatch_response.py
 10 passed in 8.51s
 ```
+## 2026-06-23：KMS routing 目录分组迁移
+
+本阶段继续做结构整理，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/routing/` 子目录。
+- 为什么改：Task Router 相关文件属于 KMS 的任务路由能力，不应该继续散落在 `src/kms` 根目录。
+- 改完什么样：`TaskRoutingCoordinator` 和 `task_context_router` 统一归到 routing 包里。
+
+移动结果：
+
+| 原位置 | 新位置 |
+|---|---|
+| `src/kms/task_routing_coordinator.py` | `src/kms/routing/task_routing.py` |
+| `src/kms/task_context_router.py` | `src/kms/routing/task_context_router.py` |
+
+架构边界审查：
+
+- 仍是 KMS 内部路由能力。
+- Kernel 不参与任务选择。
+- Thinker 不自己选择 task。
+- Talker 不保存或修改任务状态。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' -q tests\test_task_directory_router.py tests\test_dispatch_preparation.py tests\test_smoke_interrupt.py
+26 passed
+```

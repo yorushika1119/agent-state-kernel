@@ -19,8 +19,8 @@
 | `dispatch/lifecycle.py` | run 激活、stale run、dispatch 底层生命周期 | 保留 | 已移动到 `kms/dispatch/` |
 | `dispatch/thinker_dispatch.py` | 创建 thinker dispatch 并记录 conversation ref | 暂留 | 稳定后可评估并入 `dispatch/execution.py` 或 `dispatch/lifecycle.py` |
 | `task_dispatch_planner.py` | 规划 active/paused task 切换 | 保留 | 属于 KMS 调度核心 |
-| `task_routing_coordinator.py` | observe user session、读取 global tasks、调用 router | 保留 | 属于 Task Router 编排 |
-| `task_context_router.py` | 具体路由规则和 LLM route | 保留 | 文件偏大，后续可拆 rule/llm/score |
+| `routing/task_routing.py` | observe user session、读取 global tasks、调用 router | 保留 | 已移动到 `kms/routing/` |
+| `routing/task_context_router.py` | 具体路由规则和 LLM route | 保留 | 已移动到 `kms/routing/`，后续可拆 rule/llm/score |
 | `task_coordinators.py` | interrupt/resume/task switch | 保留 | 后续可按 `interrupt.py`、`resume.py` 拆分，但不急 |
 | `kernel_direct_responder.py` | 从 Kernel 状态生成直接回复文本 | 保留 | 属于 KMS 直接回答能力 |
 | `dispatch/response.py` | 包装澄清、Kernel 直接回复、no-resume 回复 | 保留 | 已移动到 `kms/dispatch/` |
@@ -96,4 +96,4 @@ src/kms/
 
 ## 下一步建议
 
-`DispatchResponseCoordinator` 已完成，`src/kms/dispatch/` 目录分组也已完成。下一步不要继续增加散落文件，建议观察一轮后再考虑 `routing/` 或 `task/` 目录分组。
+`DispatchResponseCoordinator` 已完成，`src/kms/dispatch/` 和 `src/kms/routing/` 目录分组也已完成。下一步不要继续增加散落文件，建议观察一轮后再考虑 `task/` 目录分组。

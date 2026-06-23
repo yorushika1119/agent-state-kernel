@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.kernel.engine import KernelEngine
 from src.kms.manager import KmsManager
-from src.kms.task_context_router import (
+from src.kms.routing.task_context_router import (
     _accept_llm_route,
     route_task_context,
     route_task_context_with_llm,

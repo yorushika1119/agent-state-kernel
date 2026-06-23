@@ -461,3 +461,21 @@ src/kms/dispatch/
 | Kernel | 状态、事件、视图 |
 | Thinker / Hermes | 执行模型和工具 |
 | Talker / Observer | 展示和通知 |
+## 19. 2026-06-23 Routing 目录分组
+
+KMS 的任务路由模块已经统一到：
+
+```text
+src/kms/routing/
+  task_routing.py
+  task_context_router.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `routing/task_routing.py` | observe user session，读取 global tasks，调用 router |
+| `routing/task_context_router.py` | 根据任务目录、routing hints、LLM/router 规则选择目标 task |
+
+这一步只是 KMS 内部目录整理，不改变 Kernel / Thinker / Talker 的边界。

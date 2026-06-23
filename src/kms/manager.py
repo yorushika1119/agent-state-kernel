@@ -24,7 +24,7 @@ from src.kms.task_coordinators import (
     TaskSwitchCoordinator,
 )
 from src.kms.task_dispatch_planner import TaskDispatchPlanner
-from src.kms.task_routing_coordinator import TaskRoutingCoordinator
+from src.kms.routing.task_routing import TaskRoutingCoordinator
 from src.kms.dispatch.thinker_dispatch import ThinkerDispatchCoordinator
 
 
