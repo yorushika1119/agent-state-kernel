@@ -6,14 +6,14 @@ import os
 from typing import Optional
 
 from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
-from src.kms.dispatch_decision import (
+from src.kms.dispatch.decision import (
     DispatchDecision,
     thinker_run_decision,
 )
-from src.kms.dispatch_execution import DispatchExecutionCoordinator
-from src.kms.dispatch_lifecycle_coordinator import DispatchLifecycleCoordinator
-from src.kms.dispatch_preparation import DispatchPreparationCoordinator
-from src.kms.dispatch_response import DispatchResponseCoordinator
+from src.kms.dispatch.execution import DispatchExecutionCoordinator
+from src.kms.dispatch.lifecycle import DispatchLifecycleCoordinator
+from src.kms.dispatch.preparation import DispatchPreparationCoordinator
+from src.kms.dispatch.response import DispatchResponseCoordinator
 from src.kms.kernel_direct_reply_coordinator import KernelDirectReplyCoordinator
 from src.kms.kernel_direct_responder import KernelDirectResponder
 from src.kms.kernel_session_coordinator import KernelSessionCoordinator
@@ -25,7 +25,7 @@ from src.kms.task_coordinators import (
 )
 from src.kms.task_dispatch_planner import TaskDispatchPlanner
 from src.kms.task_routing_coordinator import TaskRoutingCoordinator
-from src.kms.thinker_dispatch_coordinator import ThinkerDispatchCoordinator
+from src.kms.dispatch.thinker_dispatch import ThinkerDispatchCoordinator
 
 
 class KmsManager:

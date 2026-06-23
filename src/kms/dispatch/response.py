@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from src.kms.dispatch_decision import DispatchDecision, kernel_response_decision
+from src.kms.dispatch.decision import DispatchDecision, kernel_response_decision
 
 
 NO_RESUME_TASK_RESPONSE = "当前没有可继续的已挂起任务。"

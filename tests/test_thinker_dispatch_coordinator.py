@@ -9,8 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.kernel.engine import KernelEngine
 from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
-from src.kms.dispatch_lifecycle_coordinator import DispatchLifecycleCoordinator
-from src.kms.thinker_dispatch_coordinator import ThinkerDispatchCoordinator
+from src.kms.dispatch.lifecycle import DispatchLifecycleCoordinator
+from src.kms.dispatch.thinker_dispatch import ThinkerDispatchCoordinator
 from src.schema.state import TaskRouteDecision
 from src.stores.sqlite_store import SqliteStore
 

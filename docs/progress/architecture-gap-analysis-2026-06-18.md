@@ -2000,3 +2000,37 @@ python -m pytest -o addopts='' -q tests\test_dispatch_response.py tests\test_dis
 
 - `KmsManager` 已完成三段核心拆分：preparation、execution、response。
 - 下一步不建议继续往 `src/kms` 根目录加散文件，应该考虑先做 `kms/dispatch/` 或 `kms/response/` 目录分组迁移。
+## 2026-06-23：KMS dispatch 目录分组迁移
+
+本阶段只做结构整理，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/dispatch/` 子目录。
+- 为什么改：`src/kms` 根目录里 dispatch 相关文件越来越多，看起来像散落脚本；它们其实属于同一条 KMS 调度链路。
+- 改完什么样：dispatch 相关模块统一放进 `src/kms/dispatch/`，`KmsManager` 继续作为 KMS 总控。
+
+移动结果：
+
+| 原位置 | 新位置 |
+|---|---|
+| `src/kms/dispatch_decision.py` | `src/kms/dispatch/decision.py` |
+| `src/kms/dispatch_preparation.py` | `src/kms/dispatch/preparation.py` |
+| `src/kms/dispatch_execution.py` | `src/kms/dispatch/execution.py` |
+| `src/kms/dispatch_response.py` | `src/kms/dispatch/response.py` |
+| `src/kms/dispatch_lifecycle_coordinator.py` | `src/kms/dispatch/lifecycle.py` |
+| `src/kms/thinker_dispatch_coordinator.py` | `src/kms/dispatch/thinker_dispatch.py` |
+
+架构边界审查：
+
+- 只是 KMS 内部目录整理。
+- 没有把调度逻辑放进 Kernel。
+- 没有改变 Thinker dispatch 生命周期。
+- 没有改变 Talker / Observer 对外接口。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' -q tests\test_dispatch_lifecycle_coordinator.py tests\test_thinker_dispatch_coordinator.py tests\test_dispatch_preparation.py tests\test_dispatch_execution.py tests\test_dispatch_response.py
+10 passed in 8.51s
+```

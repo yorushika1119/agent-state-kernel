@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.kernel.engine import KernelEngine
-from src.kms.dispatch_preparation import DispatchPreparationCoordinator
+from src.kms.dispatch.preparation import DispatchPreparationCoordinator
 from src.kms.kernel_session_coordinator import KernelSessionCoordinator
 from src.schema.state import TaskRouteDecision
 from src.stores.sqlite_store import SqliteStore

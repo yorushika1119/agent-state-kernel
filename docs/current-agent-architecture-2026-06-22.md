@@ -439,3 +439,25 @@ DispatchExecutionCoordinator
 - Kernel 负责状态和视图。
 - Thinker 只执行 dispatch。
 - Talker/Observer 只消费 KMS/Kernel 暴露的结果。
+## 18. 2026-06-23 Dispatch 目录分组
+
+`src/kms` 根目录已经不再继续散放 dispatch 相关模块，当前统一为：
+
+```text
+src/kms/dispatch/
+  decision.py
+  preparation.py
+  response.py
+  execution.py
+  lifecycle.py
+  thinker_dispatch.py
+```
+
+这只是目录整理，不改变职责：
+
+| 层 | 职责 |
+|---|---|
+| KMS dispatch package | 用户消息调度、回复包装、run/task/dispatch 编排 |
+| Kernel | 状态、事件、视图 |
+| Thinker / Hermes | 执行模型和工具 |
+| Talker / Observer | 展示和通知 |
