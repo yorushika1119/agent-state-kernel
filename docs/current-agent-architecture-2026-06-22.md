@@ -479,3 +479,24 @@ src/kms/routing/
 | `routing/task_context_router.py` | 根据任务目录、routing hints、LLM/router 规则选择目标 task |
 
 这一步只是 KMS 内部目录整理，不改变 Kernel / Thinker / Talker 的边界。
+
+## 20. 2026-06-23 Task 目录分组
+
+KMS 的任务切换和 task-local 状态过滤模块已经统一到：
+
+```text
+src/kms/task/
+  coordinators.py
+  dispatch_planner.py
+  scoped_state.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `task/coordinators.py` | 暂停当前 task、恢复 paused task、同步 global task |
+| `task/dispatch_planner.py` | 在 KMS 层规划 active/paused task 的切换 |
+| `task/scoped_state.py` | 给 Kernel 直接回复过滤 task-local 状态 |
+
+这一步仍然只是 KMS 内部目录整理，不改变用户消息调度语义。

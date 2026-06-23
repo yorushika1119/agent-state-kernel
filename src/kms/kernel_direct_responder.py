@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.kms.task_scoped_state import TaskScopedStateFilter
+from src.kms.task.scoped_state import TaskScopedStateFilter
 from src.schema.state import (
     ClaimItem,
     TaskFlowState,

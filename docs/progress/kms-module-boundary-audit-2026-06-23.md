@@ -18,17 +18,17 @@
 | `dispatch/decision.py` | DispatchDecision 返回模型 | 保留 | 已移动到 `kms/dispatch/` |
 | `dispatch/lifecycle.py` | run 激活、stale run、dispatch 底层生命周期 | 保留 | 已移动到 `kms/dispatch/` |
 | `dispatch/thinker_dispatch.py` | 创建 thinker dispatch 并记录 conversation ref | 暂留 | 稳定后可评估并入 `dispatch/execution.py` 或 `dispatch/lifecycle.py` |
-| `task_dispatch_planner.py` | 规划 active/paused task 切换 | 保留 | 属于 KMS 调度核心 |
+| `task/dispatch_planner.py` | 规划 active/paused task 切换 | 保留 | 属于 KMS 调度核心 |
 | `routing/task_routing.py` | observe user session、读取 global tasks、调用 router | 保留 | 已移动到 `kms/routing/` |
 | `routing/task_context_router.py` | 具体路由规则和 LLM route | 保留 | 已移动到 `kms/routing/`，后续可拆 rule/llm/score |
-| `task_coordinators.py` | interrupt/resume/task switch | 保留 | 后续可按 `interrupt.py`、`resume.py` 拆分，但不急 |
+| `task/coordinators.py` | interrupt/resume/task switch | 保留 | 后续可按 `interrupt.py`、`resume.py` 拆分，但不急 |
 | `kernel_direct_responder.py` | 从 Kernel 状态生成直接回复文本 | 保留 | 属于 KMS 直接回答能力 |
 | `dispatch/response.py` | 包装澄清、Kernel 直接回复、no-resume 回复 | 保留 | 已移动到 `kms/dispatch/` |
 | `kernel_direct_reply_coordinator.py` | 记录 Kernel 直接回复 conversation ref | 暂留 | 作为 `DispatchResponseCoordinator` 的底层 helper |
 | `route_clarification_coordinator.py` | 生成澄清问题并记录引用 | 暂留 | 作为 `DispatchResponseCoordinator` 的底层 helper |
 | `conversation_ref_coordinator.py` | conversation refs 统一写入 | 保留 | 不应分散到多个模块 |
 | `notification_coordinator.py` | observer/talker 通知策略 | 保留 | 独立职责明确 |
-| `task_scoped_state.py` | task-local 状态过滤 | 保留 | 支撑直接回复和视图 |
+| `task/scoped_state.py` | task-local 状态过滤 | 保留 | 支撑直接回复和视图 |
 | `state_source_audit.py` | 新旧状态来源审计 | 保留 | 旧表退场前需要 |
 | `pipeline.py` | KMS 事件 pipeline | 保留但偏大 | 后续单独拆，不和 dispatch 混在一起 |
 | `belief.py` / `judges.py` / `model.py` | 评审、模型调用、judge | 保留 | 属于 KMS 判断能力 |
@@ -96,4 +96,4 @@ src/kms/
 
 ## 下一步建议
 
-`DispatchResponseCoordinator` 已完成，`src/kms/dispatch/` 和 `src/kms/routing/` 目录分组也已完成。下一步不要继续增加散落文件，建议观察一轮后再考虑 `task/` 目录分组。
+`DispatchResponseCoordinator` 已完成，`src/kms/dispatch/`、`src/kms/routing/` 和 `src/kms/task/` 目录分组也已完成。下一步不要继续增加散落文件，建议观察一轮后再考虑 `response/`、`notification/` 或 `audit/` 目录分组。

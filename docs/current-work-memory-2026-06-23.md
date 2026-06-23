@@ -196,7 +196,7 @@ legacy_state_fallback_audits
 - `data/kernel.db` 本轮 fallback audit 行数为 0。
 - `scripts/report_legacy_fallback_audit.py` 已可直接查看命中情况。
 - `DispatchDecision` 已从 `KmsManager` 拆出到 `src/kms/dispatch_decision.py`。
-- `TaskDispatchPlanner` 已从 `KmsManager` 拆出到 `src/kms/task_dispatch_planner.py`。
+- `TaskDispatchPlanner` 已从 `KmsManager` 拆出到 `src/kms/task/dispatch_planner.py`。
 - `RuntimeEventAdapter` 已支持 Hermes 常见工具事件和 summary/raw result 事件提交。
 - 真实 Hermes 的 `hermes_cli/kernel_dispatch.py` 已补工具事件 helper。
 - `scripts/migrate_legacy_state_tables.py --removal-check` 已可检查删表前置条件。

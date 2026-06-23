@@ -18,12 +18,12 @@ from src.kms.kernel_direct_reply_coordinator import KernelDirectReplyCoordinator
 from src.kms.kernel_direct_responder import KernelDirectResponder
 from src.kms.kernel_session_coordinator import KernelSessionCoordinator
 from src.kms.route_clarification_coordinator import RouteClarificationCoordinator
-from src.kms.task_coordinators import (
+from src.kms.task.coordinators import (
     InterruptCoordinator,
     ResumeCoordinator,
     TaskSwitchCoordinator,
 )
-from src.kms.task_dispatch_planner import TaskDispatchPlanner
+from src.kms.task.dispatch_planner import TaskDispatchPlanner
 from src.kms.routing.task_routing import TaskRoutingCoordinator
 from src.kms.dispatch.thinker_dispatch import ThinkerDispatchCoordinator
 

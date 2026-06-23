@@ -553,7 +553,7 @@ python -m pytest -q tests/test_task_directory_router.py tests/test_intent_classi
   - 负责从 Kernel 状态直接构造回复；
   - 覆盖 progress / failures / evidence / resume / run；
   - 不唤醒 Thinker。
-- `src/kms/task_coordinators.py`
+- `src/kms/task/coordinators.py`
   - `InterruptCoordinator`
     - 确保 active task 存在；
     - 打断前快照当前 task；
@@ -1334,7 +1334,7 @@ ARCHITECTURE_GLOSSARY_CHECK: passed
 核心变化：
 - 新增 `docs/progress/architecture-alignment-audit-2026-06-22.md`，逐项对照设计要求和当前实现。
 - `dispatch_context` 改为读取 `task_brief/task_flow`，不再读取旧 `intent/plan` getter。
-- `task_coordinators` 的任务快照、暂停、刷新逻辑改为读取 `task_brief/task_flow`。
+- `task/coordinators` 的任务快照、暂停、刷新逻辑改为读取 `task_brief/task_flow`。
 - `kernel_direct_responder` 的进度回复改为读取 `task_flow`。
 - `scripts/live_llm_router_smoke.py` 增加更多真实 router smoke：
   - LLM 解决模糊任务指代；
@@ -1825,7 +1825,7 @@ NO_LEGACY_FALLBACK_HITS
 
 代码变化：
 
-- 新增 `src/kms/task_dispatch_planner.py`：
+- 新增 `src/kms/task/dispatch_planner.py`：
   - 负责 KMS 内部 task 切换计划；
   - 处理 routed task、new task、resume task、默认 interrupt 场景；
   - 只做 KMS 调度计划，不直接做 Kernel reducer。
@@ -2063,4 +2063,39 @@ python -m pytest -o addopts='' -q tests\test_dispatch_lifecycle_coordinator.py t
 ```text
 python -m pytest -o addopts='' -q tests\test_task_directory_router.py tests\test_dispatch_preparation.py tests\test_smoke_interrupt.py
 26 passed
+```
+
+## 2026-06-23：KMS task 目录分组迁移
+
+本阶段继续做结构整理，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/task/` 子目录。
+- 为什么改：任务暂停、恢复、切换计划、task-local 状态过滤都属于 KMS 的任务调度支撑能力，不应该继续散落在 `src/kms` 根目录。
+- 改完什么样：task 相关模块统一归到 task 包里，`KmsManager` 只通过清晰的 coordinator/planner 调用它们。
+
+移动结果：
+
+| 原位置 | 新位置 |
+|---|---|
+| `src/kms/task_coordinators.py` | `src/kms/task/coordinators.py` |
+| `src/kms/task_dispatch_planner.py` | `src/kms/task/dispatch_planner.py` |
+| `src/kms/task_scoped_state.py` | `src/kms/task/scoped_state.py` |
+
+架构边界审查：
+
+- 仍是 KMS 内部任务调度能力。
+- Kernel 仍只保存和解释状态。
+- Thinker 不参与 task 选择或恢复决策。
+- Talker/Observer 不直接修改任务状态。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' -q tests\test_task_switch_coordinator.py tests\test_dispatch_execution.py tests\test_task_directory_router.py tests\test_smoke_interrupt.py
+29 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
 ```

@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.kernel.engine import KernelEngine
-from src.kms.task_coordinators import (
+from src.kms.task.coordinators import (
     InterruptCoordinator,
     ResumeCoordinator,
     TaskSwitchCoordinator,
