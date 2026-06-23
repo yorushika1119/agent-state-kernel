@@ -8,7 +8,7 @@ from typing import Optional
 from src.kms.context.conversation_refs import ConversationRefCoordinator
 from src.kms.dispatch.decision import (
     DispatchDecision,
-    thinker_run_decision,
+    thinker_run_decision_from_execution,
 )
 from src.kms.dispatch.execution import DispatchExecutionCoordinator
 from src.kms.dispatch.lifecycle import DispatchLifecycleCoordinator
@@ -173,25 +173,8 @@ class KmsManager:
                 runtime_refs=runtime_refs,
             )
 
-        refreshed = execution.refreshed or execution.session
-        active_task = execution.active_task
-        task_plan = execution.task_plan
-
-        return thinker_run_decision(
-            action=task_plan.action,
-            kernel_session_id=execution.session.kernel_session_id,
-            intent_version=execution.task_brief_version,
-            run_id=execution.run_id,
-            session_status=refreshed.status.value if refreshed else "running",
-            reason=execution.reason,
-            task_action=execution.task_action,
-            task_id=active_task.task_id if active_task else (refreshed.active_task_id if refreshed else ""),
-            resume_context=execution.resume_context,
+        return thinker_run_decision_from_execution(
+            execution=execution,
             user_session_id=user_session.user_session_id,
             route_decision=route.routing_decision,
-            thinker_dispatch_id=(
-                execution.thinker_dispatch.dispatch_id
-                if execution.thinker_dispatch
-                else ""
-            ),
         )

@@ -82,3 +82,36 @@ def thinker_run_decision(
         route_decision=route_decision,
         thinker_dispatch_id=thinker_dispatch_id,
     )
+
+
+def thinker_run_decision_from_execution(
+    *,
+    execution: Any,
+    user_session_id: str,
+    route_decision: str,
+) -> DispatchDecision:
+    refreshed = execution.refreshed or execution.session
+    active_task = execution.active_task
+    task_plan = execution.task_plan
+    return thinker_run_decision(
+        action=task_plan.action,
+        kernel_session_id=execution.session.kernel_session_id,
+        intent_version=execution.task_brief_version,
+        run_id=execution.run_id,
+        session_status=refreshed.status.value if refreshed else "running",
+        reason=execution.reason,
+        task_action=execution.task_action,
+        task_id=(
+            active_task.task_id
+            if active_task
+            else (refreshed.active_task_id if refreshed else "")
+        ),
+        resume_context=execution.resume_context,
+        user_session_id=user_session_id,
+        route_decision=route_decision,
+        thinker_dispatch_id=(
+            execution.thinker_dispatch.dispatch_id
+            if execution.thinker_dispatch
+            else ""
+        ),
+    )

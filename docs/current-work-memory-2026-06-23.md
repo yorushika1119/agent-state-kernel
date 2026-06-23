@@ -70,10 +70,11 @@ Talker / Hermes
 | 旧表物理删除 removal-check / drop 工具 | 已完成第一版，真实库未执行 drop |
 | KMS pipeline stage 拆分 | 已完成第一轮，Normalize/Validate/Classify/Arbitrate/EventLog/Reduce/Summarize/Gate/Sync 已拆出 |
 | 新表-only 主链路测试 | 已完成第一版，58 passed |
+| KmsManager DispatchDecision builder 拆分 | 已完成，manager 末尾拼装逻辑已移出 |
 
 ## 4. 最近完成的阶段
 
-最近完成的是“KMS pipeline stage 拆分”和“旧状态表物理删除准备”。
+最近完成的是“KMS pipeline stage 拆分”“旧状态表物理删除准备”和“KmsManager 返回对象拼装拆分”。
 
 代码变化：
 
@@ -83,6 +84,7 @@ Talker / Hermes
 - `SqliteStore` 支持 `KERNEL_CREATE_LEGACY_STATE_TABLES=0` 环境变量。
 - `scripts/migrate_legacy_state_tables.py` 新增 `--drop-legacy-tables`。
 - `scripts/test_new_table_only.py` 可重复验证无 legacy 表主链路。
+- `thinker_run_decision_from_execution(...)` 接管 execution result 到 `DispatchDecision` 的转换。
 - 默认仍保留 `get_intent / get_plan / get_beliefs / get_commitments` 的旧表读取 fallback。
 
 测试变化：
@@ -117,6 +119,12 @@ python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-
 58 passed
 
 python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-legacy-env-core -p no:cacheprovider
+81 passed
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-decision-builder -p no:cacheprovider -q tests\test_dispatch_execution.py tests\test_dispatch_response.py tests\test_manager_observer_views.py tests\test_smoke_interrupt.py
+16 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-decision-builder-core -p no:cacheprovider
 81 passed
 ```
 

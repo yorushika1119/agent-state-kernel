@@ -2201,6 +2201,34 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-legacy-env
 81 passed
 ```
 
+## 2026-06-23：KmsManager DispatchDecision Builder 拆分
+
+本阶段继续让 `KmsManager` 变薄，不改调度语义。
+
+通俗说明：
+
+- 改哪里：新增 `thinker_run_decision_from_execution(...)`。
+- 为什么改：`KmsManager` 不应该手工拼最终返回对象，它只应该串联准备、响应和执行。
+- 改完什么样：执行结果到 `DispatchDecision` 的转换放到 `src/kms/dispatch/decision.py`。
+
+架构边界审查：
+
+- 仍是 KMS 内部 dispatch 决策。
+- Kernel 不参与 thinker dispatch 返回对象拼装。
+- Thinker 仍只消费最终 dispatch。
+
+验证结果：
+
+```text
+python -m py_compile src\kms\manager.py src\kms\dispatch\decision.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-decision-builder -p no:cacheprovider -q tests\test_dispatch_execution.py tests\test_dispatch_response.py tests\test_manager_observer_views.py tests\test_smoke_interrupt.py
+16 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-decision-builder-core -p no:cacheprovider
+81 passed
+```
+
 ## 2026-06-23：KMS Sync stage 拆分
 
 本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。

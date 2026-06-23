@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.kernel.engine import KernelEngine
 from src.kms import KmsManager
+from src.kms.dispatch.decision import thinker_run_decision_from_execution
 from src.schema.state import TaskRouteDecision
 from src.stores.sqlite_store import SqliteStore
 
@@ -65,6 +66,17 @@ async def test_dispatch_execution_creates_task_and_thinker_dispatch():
         assert result.active_task.task_id
         assert result.thinker_dispatch.dispatch_id.startswith("td_")
         assert result.task_plan.action == "start_new_task"
+
+        decision = thinker_run_decision_from_execution(
+            execution=result,
+            user_session_id=user_session.user_session_id,
+            route_decision=route.routing_decision,
+        )
+        assert decision.action == "start_new_task"
+        assert decision.kernel_session_id == result.session.kernel_session_id
+        assert decision.task_id == result.active_task.task_id
+        assert decision.thinker_dispatch_id == result.thinker_dispatch.dispatch_id
+        assert decision.user_session_id == user_session.user_session_id
 
         global_task = await store.get_global_task(result.active_task.task_id)
         assert global_task is not None

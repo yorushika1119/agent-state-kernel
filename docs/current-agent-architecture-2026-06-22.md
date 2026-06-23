@@ -886,3 +886,23 @@ KERNEL_CREATE_LEGACY_STATE_TABLES=0
 python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-new-table-only -p no:cacheprovider
 58 passed
 ```
+
+## 41. 2026-06-23 KmsManager DispatchDecision Builder 拆分
+
+`KmsManager.dispatch_user_message()` 末尾不再手工拼 Thinker dispatch 返回对象。
+
+新增：
+
+```text
+src/kms/dispatch/decision.py
+  thinker_run_decision_from_execution(...)
+```
+
+职责变化：
+
+| 位置 | 职责 |
+|---|---|
+| `KmsManager` | 串联 prepare / response / execute |
+| `dispatch.decision` | 把 execution result 转成 `DispatchDecision` |
+
+架构边界不变：KMS 仍负责调度决策；Thinker 只消费 dispatch；Kernel 只保存状态。
