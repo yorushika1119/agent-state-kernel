@@ -23,8 +23,9 @@
 | `task_context_router.py` | 具体路由规则和 LLM route | 保留 | 文件偏大，后续可拆 rule/llm/score |
 | `task_coordinators.py` | interrupt/resume/task switch | 保留 | 后续可按 `interrupt.py`、`resume.py` 拆分，但不急 |
 | `kernel_direct_responder.py` | 从 Kernel 状态生成直接回复文本 | 保留 | 属于 KMS 直接回答能力 |
-| `kernel_direct_reply_coordinator.py` | 记录 Kernel 直接回复 conversation ref | 暂留 | 以后可和 response 包装统一 |
-| `route_clarification_coordinator.py` | 生成澄清问题并记录引用 | 暂留 | 以后可和 response 包装统一 |
+| `dispatch_response.py` | 包装澄清、Kernel 直接回复、no-resume 回复 | 保留 | 已承担 response 分组入口 |
+| `kernel_direct_reply_coordinator.py` | 记录 Kernel 直接回复 conversation ref | 暂留 | 作为 `DispatchResponseCoordinator` 的底层 helper |
+| `route_clarification_coordinator.py` | 生成澄清问题并记录引用 | 暂留 | 作为 `DispatchResponseCoordinator` 的底层 helper |
 | `conversation_ref_coordinator.py` | conversation refs 统一写入 | 保留 | 不应分散到多个模块 |
 | `notification_coordinator.py` | observer/talker 通知策略 | 保留 | 独立职责明确 |
 | `task_scoped_state.py` | task-local 状态过滤 | 保留 | 支撑直接回复和视图 |
@@ -95,4 +96,4 @@ src/kms/
 
 ## 下一步建议
 
-下一步不要继续增加散落文件。建议先做 `DispatchResponseCoordinator`，把直接回复和澄清回复集中起来；如果再新增文件，应优先放到未来可迁移的 response 分组语义下。
+`DispatchResponseCoordinator` 已完成。下一步不要继续增加散落文件，建议优先做目录分组迁移，例如先建立 `src/kms/dispatch/` 和 `src/kms/response/`，只移动文件、不改行为。

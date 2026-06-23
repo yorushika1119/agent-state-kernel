@@ -74,7 +74,7 @@ async def test_dispatch_execution_creates_task_and_thinker_dispatch():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_execution_no_resume_task_records_direct_reply():
+async def test_dispatch_execution_no_resume_task_returns_non_thinker_result():
     store, engine, manager = await build_runtime()
     try:
         session = await engine.create_session(
@@ -106,15 +106,9 @@ async def test_dispatch_execution_no_resume_task_records_direct_reply():
         )
 
         assert result.requires_thinker is False
-        assert result.kernel_response == "当前没有可继续的已挂起任务。"
+        assert result.task_plan.no_resume_task is True
+        assert result.kernel_response == ""
         assert result.reason == "no_paused_task_to_resume"
         assert result.task_action == "respond_from_kernel"
-
-        refs = await store.list_task_conversation_refs(
-            user_session_id=user_session.user_session_id,
-            limit=10,
-        )
-        assert [ref.role for ref in refs] == ["assistant", "user"]
-        assert refs[0].metadata["reason"] == "no_paused_task_to_resume"
     finally:
         await store.close()

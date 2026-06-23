@@ -404,3 +404,38 @@ Hermes 收到用户消息
 - Kernel 仍然负责状态和视图。
 - Thinker 仍然负责执行。
 - Talker/Observer 仍然读取 KMS/Kernel 给出的可见结果。
+## 17. 2026-06-23 DispatchResponse 拆分
+
+本轮继续让 `KmsManager` 变薄，新增 `DispatchResponseCoordinator`。
+
+当前 KMS 用户消息主流程：
+
+```text
+DispatchPreparationCoordinator
+  -> 先判断 user session / task route / intent flags
+
+KmsManager
+  -> 只选择走哪个分支
+
+DispatchResponseCoordinator
+  -> 处理澄清、Kernel 直接回复、no-resume 回复
+
+DispatchExecutionCoordinator
+  -> 处理需要 Thinker 的 run/task/dispatch 创建
+```
+
+模块职责：
+
+| 模块 | 职责 |
+|---|---|
+| `DispatchPreparationCoordinator` | 读状态，准备判断 |
+| `DispatchResponseCoordinator` | 包装不需要 Thinker 的 KMS 回复 |
+| `DispatchExecutionCoordinator` | 执行需要 Thinker 的调度 |
+| `KmsManager` | 串起这些 coordinator，保持总控 |
+
+架构边界没有变化：
+
+- KMS 负责调度和回复包装。
+- Kernel 负责状态和视图。
+- Thinker 只执行 dispatch。
+- Talker/Observer 只消费 KMS/Kernel 暴露的结果。

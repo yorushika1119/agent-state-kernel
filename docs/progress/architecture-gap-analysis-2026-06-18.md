@@ -1964,3 +1964,39 @@ python -m pytest -o addopts='' -q tests\test_dispatch_execution.py tests\test_di
 
 - `KmsManager` 已完成第二步拆分：前置准备和执行调度都已分离。
 - 下一步如果继续拆，应该拆“Kernel 直接回复 / 澄清回复返回 DispatchDecision”的包装，让 manager 只保留更薄的分支编排。
+## 2026-06-23：DispatchResponse 拆分
+
+本阶段继续收敛 `KmsManager`，把“不需要 Thinker 的 KMS 回复包装”拆到 `DispatchResponseCoordinator`。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/dispatch_response.py`。
+- 为什么改：`KmsManager` 里还在直接拼澄清回复、Kernel 直接回复、no-resume 回复对应的 `DispatchDecision`，这会让 manager 继续变胖。
+- 改完什么样：`KmsManager` 只判断走哪个分支；真正生成回复、记录 conversation ref、包装 `DispatchDecision` 交给 `DispatchResponseCoordinator`。
+
+覆盖的回复类型：
+
+| 类型 | 行为 |
+|---|---|
+| `ask_clarification` | 返回澄清问题，不创建 thinker dispatch，不打断 active run |
+| `respond_from_kernel` | 从 Kernel 状态直接生成回复，不唤醒 Thinker |
+| `no_paused_task_to_resume` | 没有可恢复任务时直接回复，并记录 conversation ref |
+
+架构边界审查：
+
+- 回复包装仍在 KMS 层。
+- Kernel 不参与任务路由和回复决策。
+- Thinker 不会因为澄清或直接回复被唤醒。
+- Conversation ref 仍只保存摘要和 runtime 引用，不保存完整聊天记录。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' -q tests\test_dispatch_response.py tests\test_dispatch_execution.py tests\test_dispatch_preparation.py tests\test_task_directory_router.py tests\test_smoke_interrupt.py
+31 passed in 84.25s
+```
+
+当前结论：
+
+- `KmsManager` 已完成三段核心拆分：preparation、execution、response。
+- 下一步不建议继续往 `src/kms` 根目录加散文件，应该考虑先做 `kms/dispatch/` 或 `kms/response/` 目录分组迁移。

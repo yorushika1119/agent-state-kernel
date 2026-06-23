@@ -37,7 +37,6 @@ class DispatchExecutionCoordinator:
         task_dispatch_planner,
         task_switches,
         thinker_dispatches,
-        direct_replies,
     ):
         self.store = store
         self.sessions = sessions
@@ -45,7 +44,6 @@ class DispatchExecutionCoordinator:
         self.task_dispatch_planner = task_dispatch_planner
         self.task_switches = task_switches
         self.thinker_dispatches = thinker_dispatches
-        self.direct_replies = direct_replies
 
     async def task_brief_version_for_session(
         self,
@@ -115,17 +113,6 @@ class DispatchExecutionCoordinator:
         )
 
         if task_plan.no_resume_task:
-            response_text = "当前没有可继续的已挂起任务。"
-            await self.direct_replies.record_static_reply(
-                session=session,
-                user_text=text,
-                response_text=response_text,
-                user_session_id=user_session.user_session_id,
-                route=route,
-                task_id=session.active_task_id or "",
-                runtime_refs=runtime_refs,
-                metadata={"reason": "no_paused_task_to_resume"},
-            )
             return DispatchExecutionResult(
                 session=session,
                 refreshed=session,
@@ -133,7 +120,6 @@ class DispatchExecutionCoordinator:
                 task_plan=task_plan,
                 run_id=session.active_run_id or "",
                 task_brief_version=current_version,
-                kernel_response=response_text,
                 reason="no_paused_task_to_resume",
                 task_action="respond_from_kernel",
             )

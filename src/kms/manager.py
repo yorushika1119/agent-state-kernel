@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Optional
 
 from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
 from src.kms.dispatch_decision import (
     DispatchDecision,
-    kernel_response_decision,
     thinker_run_decision,
 )
 from src.kms.dispatch_execution import DispatchExecutionCoordinator
 from src.kms.dispatch_lifecycle_coordinator import DispatchLifecycleCoordinator
 from src.kms.dispatch_preparation import DispatchPreparationCoordinator
+from src.kms.dispatch_response import DispatchResponseCoordinator
 from src.kms.kernel_direct_reply_coordinator import KernelDirectReplyCoordinator
 from src.kms.kernel_direct_responder import KernelDirectResponder
 from src.kms.kernel_session_coordinator import KernelSessionCoordinator
@@ -58,6 +58,11 @@ class KmsManager:
             self.direct_responder,
             self.conversation_refs,
         )
+        self.dispatch_responses = DispatchResponseCoordinator(
+            store=store,
+            route_clarifications=self.route_clarifications,
+            direct_replies=self.direct_replies,
+        )
         self.dispatch_execution = DispatchExecutionCoordinator(
             store=store,
             sessions=self.sessions,
@@ -65,7 +70,6 @@ class KmsManager:
             task_dispatch_planner=self.task_dispatch_planner,
             task_switches=self.task_switches,
             thinker_dispatches=self.thinker_dispatches,
-            direct_replies=self.direct_replies,
         )
         self.enable_llm_router = (
             os.getenv("KMS_ENABLE_LLM_ROUTER") == "1"
@@ -79,17 +83,6 @@ class KmsManager:
         self.dispatch_preparation = DispatchPreparationCoordinator(
             self.task_router,
             self.sessions,
-        )
-
-    async def _task_brief_version_for_session(
-        self,
-        session: Any,
-        *,
-        increment: int = 0,
-    ) -> int:
-        return await self.dispatch_execution.task_brief_version_for_session(
-            session,
-            increment=increment,
         )
 
     async def dispatch_user_message(
@@ -127,26 +120,12 @@ class KmsManager:
         flags = prepared.flags
 
         if flags.route_clarification_applies:
-            clarification_response = self.route_clarifications.build_response(route)
-            await self.route_clarifications.record_exchange(
+            return await self.dispatch_responses.clarification(
+                session=session,
                 user_text=text,
-                response_text=clarification_response,
                 user_session_id=user_session.user_session_id,
-                kernel_session_id=session.kernel_session_id if session else "",
                 route=route,
                 runtime_refs=runtime_refs,
-            )
-            return kernel_response_decision(
-                kernel_session_id=session.kernel_session_id if session else "",
-                intent_version=await self._task_brief_version_for_session(session),
-                run_id=session.active_run_id if session else "",
-                session_status=session.status.value if session else "unknown",
-                reason="task_route_needs_clarification",
-                task_action="ask_clarification",
-                task_id=session.active_task_id if session else "",
-                kernel_response=clarification_response,
-                user_session_id=user_session.user_session_id,
-                route_decision=route.routing_decision,
             )
 
         if session and flags.wants_kernel_response:
@@ -155,26 +134,15 @@ class KmsManager:
                 if route.routing_decision == "select_existing" and route.target_task_id
                 else session.active_task_id or ""
             )
-            kernel_response = await self.direct_replies.build_and_record(
+            return await self.dispatch_responses.kernel_direct_reply(
                 session=session,
                 user_text=text,
                 user_session_id=user_session.user_session_id,
                 route=route,
+                reason=intent.reason or "kernel_direct_status_reply",
                 kind=intent.kernel_answer_kind or "progress",
                 target_task_id=response_task_id,
                 runtime_refs=runtime_refs,
-            )
-            return kernel_response_decision(
-                kernel_session_id=session.kernel_session_id,
-                intent_version=await self._task_brief_version_for_session(session),
-                run_id=session.active_run_id or "",
-                session_status=session.status.value,
-                reason=intent.reason or "kernel_direct_status_reply",
-                task_action="respond_from_kernel",
-                task_id=response_task_id,
-                kernel_response=kernel_response,
-                user_session_id=user_session.user_session_id,
-                route_decision=route.routing_decision,
             )
 
         execution = await self.dispatch_execution.execute(
@@ -195,18 +163,14 @@ class KmsManager:
             runtime_refs=runtime_refs,
         )
 
-        if execution.kernel_response:
-            return kernel_response_decision(
-                kernel_session_id=execution.session.kernel_session_id,
-                intent_version=execution.task_brief_version,
-                run_id=execution.run_id,
-                session_status=execution.session.status.value,
-                reason=execution.reason,
-                task_action=execution.task_action,
-                task_id=execution.session.active_task_id or "",
-                kernel_response=execution.kernel_response,
+        if execution.task_plan.no_resume_task:
+            return await self.dispatch_responses.no_resume_task(
+                session=execution.session,
+                user_text=text,
                 user_session_id=user_session.user_session_id,
-                route_decision=route.routing_decision,
+                route=route,
+                task_brief_version=execution.task_brief_version,
+                runtime_refs=runtime_refs,
             )
 
         refreshed = execution.refreshed or execution.session
