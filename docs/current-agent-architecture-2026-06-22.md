@@ -809,3 +809,22 @@ src/kms/pipeline_stages/
 `pipeline.py` 仍保留 `sync` 导出，避免破坏 `KernelEngine.get_sync_view()`。
 
 架构边界不变：Sync 仍由 KMS 组装；Kernel 只保存状态，外部系统只读取同步视图。
+
+## 38. 2026-06-23 Reduce Stage 拆分
+
+KMS 9 阶段 pipeline 的 Reduce 阶段已经移动到：
+
+```text
+src/kms/pipeline_stages/
+  reduce.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `pipeline_stages/reduce.py` | 调用 State Reducer，把已接受事件更新到 task brief、task flow、claim、todo、execution 等派生状态 |
+
+`pipeline.py` 仍保留 `reduce` 导出，避免破坏 `KernelEngine`、API server 和测试中的旧导入。
+
+架构边界不变：KMS 负责触发 Reduce；Kernel/Store 负责保存状态；Thinker 和 Talker 仍不能直接写状态。

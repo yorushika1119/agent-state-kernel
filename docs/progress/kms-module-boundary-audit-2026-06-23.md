@@ -37,6 +37,7 @@
 | `pipeline_stages/classify.py` | Classify 阶段：事件类别路由 | 保留 | 属于 KMS 9 阶段 pipeline |
 | `pipeline_stages/arbitrate.py` | Arbitrate 阶段：candidate 提升和 judge 仲裁 | 保留 | 属于 KMS 9 阶段 pipeline |
 | `pipeline_stages/event_log.py` | EventLog 前置：event metadata 分配 | 保留 | 属于 KMS 9 阶段 pipeline |
+| `pipeline_stages/reduce.py` | Reduce 阶段：调用 State Reducer 更新派生状态 | 保留 | 属于 KMS 9 阶段 pipeline |
 | `pipeline_stages/summarize.py` | Summarize 阶段：刷新和生成进度摘要 | 保留 | 属于 KMS 9 阶段 pipeline |
 | `pipeline_stages/gate.py` | Gate 阶段：Talker 输出可见性和安全检查 | 保留 | 属于 KMS 9 阶段 pipeline |
 | `pipeline_stages/sync.py` | Sync 阶段：生成外部同步视图 | 保留 | 属于 KMS 9 阶段 pipeline |
@@ -93,6 +94,7 @@ src/kms/
     classify.py
     arbitrate.py
     event_log.py
+    reduce.py
     summarize.py
     gate.py
     sync.py

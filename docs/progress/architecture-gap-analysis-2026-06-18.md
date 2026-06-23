@@ -2100,6 +2100,45 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 79 passed
 ```
 
+## 2026-06-23：KMS Reduce stage 拆分
+
+本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/pipeline_stages/reduce.py`。
+- 为什么改：Reduce 是事件真正更新派生状态的阶段，原来占了 `pipeline.py` 很大一块，影响后续维护。
+- 改完什么样：`pipeline.py` 继续对外提供 `reduce`，实际状态更新逻辑放在单独 stage 文件里。
+
+移动结果：
+
+| 原内容 | 新位置 |
+|---|---|
+| `reduce` 实现 | `src/kms/pipeline_stages/reduce.py` |
+
+兼容说明：
+
+- `src.kms.pipeline.reduce` 仍可导入。
+- `KernelEngine`、API server 和已有测试不需要改入口。
+
+架构边界审查：
+
+- 仍是 KMS pipeline 的 Reduce 阶段。
+- KMS 只负责调用 State Reducer 和协调写入，不把状态所有权从 Kernel/Store 抢走。
+- Thinker/Talker 仍通过事件提交，不直接写派生状态。
+
+验证结果：
+
+```text
+python -m py_compile src\kms\pipeline.py src\kms\pipeline_stages\reduce.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-reduce -p no:cacheprovider -q tests\test_pipeline_event_flow.py tests\test_missing_coverage.py tests\test_state_primary_read_switch.py tests\test_legacy_state_migration.py tests\test_smoke_interrupt.py
+41 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-reduce-core -p no:cacheprovider
+79 passed
+```
+
 ## 2026-06-23：KMS Sync stage 拆分
 
 本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。

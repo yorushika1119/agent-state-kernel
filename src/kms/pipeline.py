@@ -19,19 +19,10 @@ KMS 是认知状态变更的唯一切入点。Talker 和 Thinker 不能
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.kernel.state_reducer import (
-    reduce_beliefs,
-    reduce_commitments,
-    reduce_evidence,
-    reduce_execution,
-    reduce_intent,
-    reduce_plan,
-)
 from src.kms.decisioning.model import DEEPSEEK_API_KEY
 from src.kms.pipeline_stages.arbitrate import (
     ArbitrateResult,
@@ -49,35 +40,28 @@ from src.kms.pipeline_stages.gate import (
     gate as _gate,
 )
 from src.kms.pipeline_stages.normalize import NormalizeResult, normalize
+from src.kms.pipeline_stages.reduce import reduce as _reduce
 from src.kms.pipeline_stages.summarize import (
     refresh_progress as _refresh_progress,
     summarize as _summarize,
 )
 from src.kms.pipeline_stages.sync import sync as _sync
 from src.kms.pipeline_stages.validate import ValidateResult, validate
-from src.kms.runtime.execution_payload import merge_execution_payload
 from src.kms.runtime.references import register_runtime_references
 from src.kms.state.aliases import (
     beliefs_from_claims,
-    commitments_from_todos,
     intent_from_task_brief,
-    plan_from_task_flow,
 )
 from src.schema.events import (
     Actor,
     CognitiveEvent,
     EventSubmission,
     EventType,
-    Visibility,
 )
 from src.schema.state import (
-    BeliefStatus,
-    ExecutionAction,
     ProgressState,
     SyncView,
 )
-
-logger = logging.getLogger(__name__)
 
 
 # ===========================================================================
@@ -116,138 +100,7 @@ async def reduce(
     event: CognitiveEvent,
     _processed: Optional[set] = None,
 ) -> None:
-    """调用 State Reducer 从事件更新派生状态。
-
-    幂等：通过 event_id 去重，重放时跳过已处理的事件。
-    _processed 集合在重建/重放上下文中跨调用共享。
-
-    §6 架构文档："KMS 负责调用 State Reducer 聚合最新状态"
-
-    处理顺序：
-    1. Intent ——意图目标、约束、版本
-    2. Plan ——计划步骤、状态转换
-    3. Evidence ——证据条目、可靠性评分
-    4. Beliefs ——信念声明、置信度（含完整性检查）
-    5. Execution ——工具调用、失败、重试
-    6. Commitments ——Talker 承诺
-    """
-    # ── 幂等守卫 ──
-    # 相同 event_id 不会重复处理
-    if _processed is not None:
-        if event.event_id in _processed:
-            return
-        _processed.add(event.event_id)
-
-    et = event.event_type
-    payload = event.payload
-
-    # ── 1. 意图 ──
-    # INTENT_UPDATED：更新 goal、constraints、版本号
-    # SESSION_CANCELLED：标记已取消
-    current_intent = intent_from_task_brief(await store.get_task_brief(session_id))
-    old_goal = current_intent.goal if current_intent else ""
-    old_version = current_intent.intent_version if current_intent else 0
-    new_intent = reduce_intent(current_intent, et, payload)
-    if new_intent:
-        await store.save_intent(session_id, new_intent)
-        if et == EventType.SESSION_CANCELLED:
-            await store.update_session_status(
-                session_id,
-                "cancelled",
-                active_run_id="",
-            )
-            await store.set_cancellation_token(session_id, True)
-        if current_intent and new_intent.intent_version != old_version:
-            session = await store.get_session(session_id)
-            await store.update_session_status(
-                session_id, session.status.value if session else "running",
-                intent_version=new_intent.intent_version,
-            )
-            # §5.1：目标变更时设置 cancellation_token，通知 Thinker 停止旧任务
-            if new_intent.goal and old_goal and new_intent.goal != old_goal:
-                await store.set_cancellation_token(session_id, True)
-
-    # ── 2. 计划 ──
-    # PLAN_ACCEPTED：创建/替换计划
-    # STEP_STARTED/TASK_COMPLETED：更新步骤状态
-    current_plan = plan_from_task_flow(await store.get_task_flow(session_id))
-    new_plan = reduce_plan(current_plan, et, payload)
-    if et in (
-        EventType.PLAN_ACCEPTED,
-        EventType.REPLAN_REQUEST,
-        EventType.STEP_STARTED,
-        EventType.TASK_COMPLETED,
-        EventType.TASK_FAILED,
-    ):
-        if new_plan:
-            await store.save_plan(session_id, new_plan)
-
-    # ── 3. 证据 ──
-    # EVIDENCE_ACCEPTED：追加或更新证据条目
-    evidence_items = await store.get_evidence(session_id)
-    reduce_evidence(evidence_items, et, payload)
-    if et == EventType.EVIDENCE_ACCEPTED:
-        ev_id = payload.get("evidence_id", "")
-        saved = False
-        for ev in evidence_items:
-            if ev.evidence_id == ev_id:
-                await store.save_evidence(session_id, ev)
-                saved = True
-                break
-        if not saved and evidence_items:
-            await store.save_evidence(session_id, evidence_items[-1])
-
-    # ── 4. 信念（含完整性检查）──
-    # BELIEF_UPDATED：创建或更新信念
-    # CONFLICT_DETECTED：标记为 CONFLICTING
-    # VERIFICATION_WARNING：降低置信度
-    beliefs = beliefs_from_claims(await store.get_claim_items(session_id))
-    reduce_beliefs(beliefs, et, payload)
-    if et in (EventType.BELIEF_UPDATED, EventType.CONFLICT_DETECTED,
-              EventType.VERIFICATION_WARNING_RAISED, EventType.RISK_ASSESSMENT,
-              EventType.VERIFICATION_RESULT):
-        target_id = payload.get("belief_id") or payload.get("assessment_id", "")
-        for b in beliefs:
-            if b.belief_id == target_id or (et == EventType.RISK_ASSESSMENT and b.claim.startswith("[风险]")):
-                if not b.claim or b.confidence < 0.0 or b.confidence > 1.0:
-                    logger.warning("KMS: Belief %s integrity check failed", b.belief_id)
-                    b.status = BeliefStatus.UNVERIFIED
-                    b.confidence = 0.0
-                await store.save_belief(session_id, b)
-                break
-        if et == EventType.RISK_ASSESSMENT and beliefs:
-            await store.save_belief(session_id, beliefs[-1])
-
-    # ── 5. 执行动作 ──
-    # TOOL_STARTED/COMPLETED/FAILED/RETRIED：跟踪工具调用
-    executions = await store.get_executions(session_id)
-    execution_payload = merge_execution_payload(event)
-    reduce_execution(executions, et, execution_payload)
-    if et in (EventType.TOOL_STARTED, EventType.TOOL_COMPLETED, EventType.TOOL_FAILED,
-              EventType.REASONING_SUMMARY, EventType.RAW_RESULT_AVAILABLE, EventType.ACTION_BLOCKED):
-        action_id = (
-            execution_payload.get("action_id")
-            or execution_payload.get("reasoning_id")
-            or execution_payload.get("result_id", "")
-        )
-        for a in executions:
-            if a.action_id == action_id:
-                await store.save_execution(session_id, a)
-                break
-        else:
-            if executions:
-                await store.save_execution(session_id, executions[-1])
-
-    # ── 6. 承诺 ──
-    # COMMITMENT_CREATED/UPDATED：Talker 承诺管理
-    commitments = commitments_from_todos(await store.get_todo_obligations(session_id))
-    reduce_commitments(commitments, et, payload)
-    if et in (EventType.COMMITMENT_CREATED, EventType.COMMITMENT_UPDATED):
-        cid = payload.get("commitment_id", "")
-        for c in commitments:
-            if c.commitment_id == cid:
-                await store.save_commitment(session_id, c)
-                break
+    await _reduce(store, session_id, event, _processed=_processed)
 
 
 # ===========================================================================
