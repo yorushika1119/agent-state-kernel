@@ -172,6 +172,29 @@ class RuntimeEventAdapter:
             runtime_refs=refs,
         )
 
+    async def submit_action_blocked(
+        self,
+        *,
+        action_id: str = "",
+        step_id: str = "",
+        tool: str = "",
+        reason: str,
+        runtime_refs: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        refs = runtime_refs or {}
+        resolved_action_id = action_id or refs.get("tool_call_id") or f"act_{uuid.uuid4().hex[:8]}"
+        return await self.submit_event(
+            "ActionBlocked",
+            payload={
+                "action_id": resolved_action_id,
+                "step_id": step_id,
+                "tool": tool,
+                "reason": reason,
+                "runtime_refs": refs,
+            },
+            runtime_refs=refs,
+        )
+
     async def submit_reasoning_summary(
         self,
         summary: str,

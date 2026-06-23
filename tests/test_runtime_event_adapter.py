@@ -157,11 +157,19 @@ async def test_runtime_event_adapter_submits_hermes_tool_events():
             error="command failed",
             runtime_refs={"tool_call_id": "call_2"},
         )
+        await adapter.submit_action_blocked(
+            action_id="act_blocked",
+            step_id="step_3",
+            tool="shell",
+            reason="interrupted by new user request",
+            runtime_refs={"tool_call_id": "call_3"},
+        )
 
     assert [item[1]["request_type"] for item in requests] == [
         "ToolStarted",
         "ToolCompleted",
         "ToolFailed",
+        "ActionBlocked",
     ]
     assert requests[0] == (
         "/kms/request",
@@ -183,6 +191,7 @@ async def test_runtime_event_adapter_submits_hermes_tool_events():
     )
     assert requests[1][1]["payload"]["output_ref"] == "tool-result-1"
     assert requests[2][1]["payload"]["error"] == "command failed"
+    assert requests[3][1]["payload"]["reason"] == "interrupted by new user request"
 
 
 @pytest.mark.asyncio
