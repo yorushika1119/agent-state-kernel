@@ -35,6 +35,7 @@ from src.kernel.state_reducer import (
     synthesize_progress,
 )
 from src.kms.decisioning.model import DEEPSEEK_API_KEY
+from src.kms.runtime.execution_payload import merge_execution_payload
 from src.kms.runtime.references import register_runtime_references
 from src.kms.state.aliases import (
     beliefs_from_claims,
@@ -636,26 +637,6 @@ async def _assign_event_metadata(
     return event
 
 
-def _merge_execution_payload(event: CognitiveEvent) -> Dict[str, Any]:
-    """把 event.runtime_refs 映射回执行态 payload，供 execution reducer 使用。"""
-    payload = dict(event.payload)
-    runtime_refs = payload.get("runtime_refs")
-    if not isinstance(runtime_refs, dict):
-        runtime_refs = {}
-
-    if event.runtime_refs:
-        for key, value in event.runtime_refs.model_dump().items():
-            if value and key not in runtime_refs:
-                runtime_refs[key] = value
-
-        if not payload.get("output_ref") and event.runtime_refs.tool_result_ref:
-            payload["output_ref"] = event.runtime_refs.tool_result_ref
-
-    if runtime_refs:
-        payload["runtime_refs"] = runtime_refs
-    return payload
-
-
 # ===========================================================================
 # 第 6 阶段：Reduce — 调用 State Reducer 更新派生状态
 # ===========================================================================
@@ -771,7 +752,7 @@ async def reduce(
     # ── 5. 执行动作 ──
     # TOOL_STARTED/COMPLETED/FAILED/RETRIED：跟踪工具调用
     executions = await store.get_executions(session_id)
-    execution_payload = _merge_execution_payload(event)
+    execution_payload = merge_execution_payload(event)
     reduce_execution(executions, et, execution_payload)
     if et in (EventType.TOOL_STARTED, EventType.TOOL_COMPLETED, EventType.TOOL_FAILED,
               EventType.REASONING_SUMMARY, EventType.RAW_RESULT_AVAILABLE, EventType.ACTION_BLOCKED):

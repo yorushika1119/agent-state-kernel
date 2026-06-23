@@ -652,3 +652,20 @@ src/kms/runtime/
 | `runtime/references.py` | 把 runtime message/tool/result/checkpoint/process 引用写入 `runtime_refs` 索引 |
 
 这一步符合设计文档里“Kernel 不保存完整 runtime transcript，只保存可追踪引用”的边界。
+
+## 29. 2026-06-23 Runtime Execution Payload 拆分
+
+KMS pipeline 内部的 execution payload 适配逻辑已经移动到：
+
+```text
+src/kms/runtime/
+  execution_payload.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `runtime/execution_payload.py` | 把 event.runtime_refs 合并回 execution reducer 可消费的 payload |
+
+这一步仍属于 Runtime Event Adapter 边界，不改变工具事件落表行为。
