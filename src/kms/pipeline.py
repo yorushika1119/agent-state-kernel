@@ -36,6 +36,7 @@ from src.kernel.state_reducer import (
 )
 from src.kms.decisioning.model import DEEPSEEK_API_KEY
 from src.kms.pipeline_stages.normalize import NormalizeResult, normalize
+from src.kms.pipeline_stages.validate import ValidateResult, validate
 from src.kms.runtime.execution_payload import merge_execution_payload
 from src.kms.runtime.references import register_runtime_references
 from src.kms.state.aliases import (
@@ -94,121 +95,6 @@ CANDIDATE_TO_FINAL_EVENT = {
     EventType.BELIEF_PROPOSED: EventType.BELIEF_UPDATED,
     EventType.EVIDENCE_CANDIDATE_FOUND: EventType.EVIDENCE_ACCEPTED,
 }
-
-
-# ===========================================================================
-# 第 3 阶段：Validate — 策略规则
-# ===========================================================================
-
-@dataclass
-class ValidateResult:
-    """Validate 阶段的输出。"""
-    allowed: bool
-    reason: Optional[str] = None
-
-
-# Talker 禁止直接写入以下事件类型——必须通过 Proposal 间接提交
-TALKER_FORBIDDEN = {
-    EventType.BELIEF_UPDATED,
-    EventType.EVIDENCE_ACCEPTED,
-    EventType.PLAN_ACCEPTED,
-    EventType.TASK_COMPLETED,
-}
-
-# Thinker 只允许提交以下事件类型
-THINKER_ALLOWED = {
-    EventType.PLAN_PROPOSED,
-    EventType.BELIEF_PROPOSED,
-    EventType.TOOL_STARTED,
-    EventType.TOOL_COMPLETED,
-    EventType.TOOL_FAILED,
-    EventType.TOOL_RETRIED,
-    EventType.EVIDENCE_CANDIDATE_FOUND,
-    EventType.STEP_STARTED,
-    EventType.CONFLICT_DETECTED,
-    EventType.VERIFICATION_WARNING_RAISED,
-    EventType.TASK_COMPLETED,
-    EventType.TASK_FAILED,
-    EventType.INTENT_UPDATED,
-    EventType.SESSION_CANCELLED,
-    # 扩展 Thinker 协议（§6.2）
-    EventType.REPLAN_REQUEST,
-    EventType.RISK_ASSESSMENT,
-    EventType.REASONING_SUMMARY,
-    EventType.RAW_RESULT_AVAILABLE,
-    EventType.ACTION_BLOCKED,
-    EventType.VERIFICATION_RESULT,
-    EventType.COMPLETION_CHECK,
-}
-
-
-def validate(
-    event: CognitiveEvent,
-    existing_intent_version: int = 0,
-    *,
-    session_status: str = "running",
-    active_run_id: str = "",
-) -> ValidateResult:
-    """根据策略规则验证事件。
-
-    检查项：
-    - Talker 不能直接写 belief/evidence/plan
-    - Thinker 只能提交白名单内的事件类型
-    - 意图版本不能过期
-    - 信念必须有 claim 且 confidence 在 0-1 范围内
-    """
-    et = event.event_type
-
-    # ── Talker 强制规则 ──
-    # Talker 不能直接声明 belief、提交 evidence、制定 plan
-    # 必须通过 Proposal 间接实现
-    if event.actor == Actor.TALKER:
-        if et in TALKER_FORBIDDEN:
-            return ValidateResult(False, f"Talker cannot submit {et.value}. Use proposal types instead.")
-
-    # ── Thinker 强制规则 ──
-    # Thinker 只能提交白名单内的事件类型
-    if event.actor == Actor.THINKER:
-        if et not in THINKER_ALLOWED:
-            return ValidateResult(False, f"Thinker cannot submit {et.value}.")
-        if session_status in {"paused", "cancelled", "completed", "failed"}:
-            return ValidateResult(
-                False,
-                f"Session is {session_status}; thinker writes are not accepted.",
-            )
-        if active_run_id and et not in {EventType.INTENT_UPDATED, EventType.SESSION_CANCELLED}:
-            if not event.run_id:
-                return ValidateResult(False, "Thinker must include run_id.")
-            if event.run_id != active_run_id:
-                return ValidateResult(
-                    False,
-                    f"Stale thinker run: submitted {event.run_id}, active is {active_run_id}",
-                )
-
-    # ── 意图版本过时检查 ──
-    # 当 Talker 发送新意图时，其 intent_version 不能低于当前版本
-    if (
-        event.intent_version > 0
-        and existing_intent_version > 0
-        and event.intent_version < existing_intent_version
-    ):
-        return ValidateResult(
-            False,
-            f"Intent version mismatch: submitted v{event.intent_version}, current v{existing_intent_version}",
-        )
-
-    # ── 信念输入完整性检查 ──
-    # claim 为空或 confidence 越界 → 400 拒绝
-    # 此检查在流水线早期执行，防止无效信念进入 Arbitrate 阶段
-    if et in (EventType.BELIEF_PROPOSED, EventType.BELIEF_UPDATED):
-        claim = event.payload.get("claim", "")
-        confidence = event.payload.get("confidence", 0)
-        if not claim or len(claim.strip()) < 2:
-            return ValidateResult(False, "Belief claim must be at least 2 characters")
-        if not isinstance(confidence, (int, float)) or confidence < 0 or confidence > 1:
-            return ValidateResult(False, f"Belief confidence must be 0-1, got {confidence}")
-
-    return ValidateResult(True)
 
 
 # ===========================================================================

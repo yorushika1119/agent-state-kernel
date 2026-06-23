@@ -686,3 +686,20 @@ src/kms/pipeline_stages/
 | `pipeline_stages/normalize.py` | 把 Talker/Thinker submission 转成结构化 `CognitiveEvent` |
 
 这一步是按设计文档的 9 阶段拆分 pipeline；`pipeline.py` 仍保留对外 `normalize` 名字，调用方不需要改变。
+
+## 31. 2026-06-23 Validate Stage 拆分
+
+KMS 9 阶段 pipeline 的 Validate 阶段已经移动到：
+
+```text
+src/kms/pipeline_stages/
+  validate.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `pipeline_stages/validate.py` | 检查 Talker/Thinker 权限、run 是否 stale、intent version 和 belief payload 是否有效 |
+
+这一步继续按设计文档拆 pipeline；验证规则仍由 KMS 执行，不下沉到 Kernel。

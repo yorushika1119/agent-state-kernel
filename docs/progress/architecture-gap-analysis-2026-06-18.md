@@ -2100,6 +2100,42 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 79 passed
 ```
 
+## 2026-06-23：KMS Validate stage 拆分
+
+本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/pipeline_stages/validate.py`。
+- 为什么改：Validate 是独立阶段，负责 Talker/Thinker 权限、run stale、intent version 和 belief payload 检查。
+- 改完什么样：`pipeline.py` 继续编排阶段，但验证规则在单独 stage 文件里。
+
+移动结果：
+
+| 原内容 | 新位置 |
+|---|---|
+| `ValidateResult` | `src/kms/pipeline_stages/validate.py` |
+| `validate` | `src/kms/pipeline_stages/validate.py` |
+| `TALKER_FORBIDDEN / THINKER_ALLOWED` | `src/kms/pipeline_stages/validate.py` |
+
+架构边界审查：
+
+- 仍是 KMS pipeline 的 Validate 阶段。
+- Kernel 不负责准入策略判断。
+- Thinker stale run 防护仍在 KMS。
+
+验证结果：
+
+```text
+python -m py_compile src\kms\pipeline.py src\kms\pipeline_stages\validate.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider -q tests\test_pipeline_event_flow.py tests\test_missing_coverage.py tests\test_smoke_interrupt.py
+35 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
+
 ## 2026-06-23：KMS Normalize stage 拆分
 
 本阶段开始按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。
