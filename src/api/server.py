@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -601,6 +601,48 @@ async def _notification_event_stream(
         await asyncio.sleep(max(poll_interval, 0.1))
 
 
+async def _notification_websocket_loop(
+    websocket: WebSocket,
+    *,
+    target: str,
+    kernel_session_id: str = "",
+    task_id: str = "",
+    status: str = "pending",
+    limit: int = 50,
+    poll_interval: float = 1.0,
+    once: bool = False,
+):
+    await websocket.accept()
+    engine = get_engine()
+    seen: set[str] = set()
+    try:
+        while True:
+            notifications = await engine.store.list_observer_notifications(
+                target=target,
+                kernel_session_id=kernel_session_id,
+                task_id=task_id,
+                status=status,
+                limit=limit,
+            )
+            for notification in notifications:
+                if notification.notification_id in seen:
+                    continue
+                seen.add(notification.notification_id)
+                await websocket.send_text(
+                    json.dumps(
+                        notification.model_dump(),
+                        ensure_ascii=False,
+                        default=str,
+                    )
+                )
+            if once:
+                await websocket.close()
+                return
+            await asyncio.sleep(max(poll_interval, 0.1))
+    except WebSocketDisconnect:
+        return
+
+
 async def _ack_notification(notification_id: str):
     engine = get_engine()
     notification = await engine.store.ack_observer_notification(notification_id)
@@ -656,6 +698,28 @@ async def stream_observer_notifications(
     )
 
 
+@app.websocket("/kms/observer/notifications/ws")
+async def websocket_observer_notifications(
+    websocket: WebSocket,
+    kernel_session_id: str = "",
+    task_id: str = "",
+    status: str = "pending",
+    limit: int = 50,
+    poll_interval: float = 1.0,
+    once: bool = False,
+):
+    await _notification_websocket_loop(
+        websocket,
+        target="observer",
+        kernel_session_id=kernel_session_id,
+        task_id=task_id,
+        status=status,
+        limit=limit,
+        poll_interval=poll_interval,
+        once=once,
+    )
+
+
 @app.post("/kms/observer/notifications/{notification_id}/ack")
 async def ack_observer_notification(notification_id: str):
     return await _ack_notification(notification_id)
@@ -702,6 +766,28 @@ async def stream_talker_notifications(
             once=once,
         ),
         media_type="text/event-stream",
+    )
+
+
+@app.websocket("/kms/talker/notifications/ws")
+async def websocket_talker_notifications(
+    websocket: WebSocket,
+    kernel_session_id: str = "",
+    task_id: str = "",
+    status: str = "pending",
+    limit: int = 50,
+    poll_interval: float = 1.0,
+    once: bool = False,
+):
+    await _notification_websocket_loop(
+        websocket,
+        target="talker",
+        kernel_session_id=kernel_session_id,
+        task_id=task_id,
+        status=status,
+        limit=limit,
+        poll_interval=poll_interval,
+        once=once,
     )
 
 

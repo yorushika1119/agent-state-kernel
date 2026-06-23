@@ -189,3 +189,40 @@ async def test_high_priority_failure_is_not_deduped_by_progress_update():
         assert len(notifications) == 2
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_repeated_task_failures_escalate_to_interrupt_user():
+    store = await build_store()
+    try:
+        dispatch = await store.create_thinker_dispatch(
+            kernel_session_id="ask_notify_escalate",
+            task_id="task_notify_escalate",
+            run_id="run_notify_escalate",
+        )
+        coordinator = NotificationCoordinator(store)
+
+        first = await coordinator.notify_dispatch_failed(
+            dispatch,
+            error="failure 1",
+            active_run_completed=True,
+        )
+        await store.resolve_observer_notification(first.notification_id)
+        second = await coordinator.notify_dispatch_failed(
+            dispatch,
+            error="failure 2",
+            active_run_completed=True,
+        )
+        await store.resolve_observer_notification(second.notification_id)
+        third = await coordinator.notify_dispatch_failed(
+            dispatch,
+            error="failure 3",
+            active_run_completed=True,
+        )
+
+        assert third.urgency == "critical"
+        assert third.delivery_policy["priority"] == "urgent"
+        assert third.delivery_policy["interrupt_user"] is True
+        assert third.delivery_policy["requires_user_visible_message"] is True
+    finally:
+        await store.close()

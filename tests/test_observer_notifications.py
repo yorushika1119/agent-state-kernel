@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -344,6 +345,51 @@ async def test_talker_notification_stream_only_returns_talker_events():
         assert f"id: {talker.notification_id}" in response.text
         assert "event: needs_user_input" in response.text
         assert observer.notification_id not in response.text
+    finally:
+        api_server._store = previous_store
+        api_server._engine = previous_engine
+        api_server._kms_manager = previous_kms_manager
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_observer_notification_websocket_returns_pending_events():
+    store, engine, manager = await build_runtime()
+    previous_store = api_server._store
+    previous_engine = api_server._engine
+    previous_kms_manager = api_server._kms_manager
+    api_server._store = store
+    api_server._engine = engine
+    api_server._kms_manager = manager
+
+    try:
+        session = await engine.create_session(agent_id="agent-notify-ws")
+        expected = await store.create_observer_notification(
+            target="observer",
+            kernel_session_id=session.kernel_session_id,
+            task_id="task_ws",
+            notification_type="task_done",
+            reason="send over websocket",
+        )
+        await store.create_observer_notification(
+            target="talker",
+            kernel_session_id=session.kernel_session_id,
+            task_id="task_ws",
+            notification_type="needs_user_input",
+            reason="wrong target",
+        )
+
+        with TestClient(api_server.app) as client:
+            api_server._store = store
+            api_server._engine = engine
+            api_server._kms_manager = manager
+            with client.websocket_connect(
+                f"/kms/observer/notifications/ws?kernel_session_id={session.kernel_session_id}&once=true"
+            ) as websocket:
+                payload = websocket.receive_json()
+
+        assert payload["notification_id"] == expected.notification_id
+        assert payload["notification_type"] == "task_done"
     finally:
         api_server._store = previous_store
         api_server._engine = previous_engine

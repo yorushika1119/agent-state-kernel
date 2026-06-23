@@ -107,9 +107,9 @@ class NotificationCoordinator:
         notification_type: str,
         reason: str,
     ) -> ObserverNotification:
-        policy = NOTIFICATION_POLICIES.get(
-            notification_type,
-            DEFAULT_NOTIFICATION_POLICY,
+        policy = await self._policy_for_dispatch(
+            dispatch,
+            notification_type=notification_type,
         )
         dedupe_key = f"{dispatch.task_id or dispatch.kernel_session_id}:{notification_type}"
         existing = await self._find_existing_notification(
@@ -140,6 +140,41 @@ class NotificationCoordinator:
                 "silent_update": policy.silent_update,
                 "interrupt_user": policy.interrupt_user,
             },
+        )
+
+    async def _policy_for_dispatch(
+        self,
+        dispatch: Any,
+        *,
+        notification_type: str,
+    ) -> NotificationPolicy:
+        policy = NOTIFICATION_POLICIES.get(
+            notification_type,
+            DEFAULT_NOTIFICATION_POLICY,
+        )
+        if notification_type != "task_failed":
+            return policy
+
+        notifications = await self.store.list_observer_notifications(
+            target="observer",
+            kernel_session_id=dispatch.kernel_session_id,
+            task_id=dispatch.task_id,
+            status="",
+            limit=100,
+        )
+        previous_failures = [
+            notification
+            for notification in notifications
+            if notification.notification_type == "task_failed"
+        ]
+        if len(previous_failures) < 2:
+            return policy
+
+        return NotificationPolicy(
+            urgency="critical",
+            priority="urgent",
+            requires_user_visible_message=True,
+            interrupt_user=True,
         )
 
     async def _find_existing_notification(
