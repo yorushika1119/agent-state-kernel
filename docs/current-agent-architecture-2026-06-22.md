@@ -790,3 +790,22 @@ src/kms/pipeline_stages/
 `pipeline.py` 仍保留 `GateResult`、`COMPLETION_KEYWORDS`、`_rule_contradicts_verified_belief` 和 `gate` 导出，避免破坏现有调用。
 
 架构边界不变：Gate 仍是 KMS 的出口判断；Kernel 只提供状态，Talker 只消费结果。
+
+## 37. 2026-06-23 Sync Stage 拆分
+
+KMS 9 阶段 pipeline 的 Sync 阶段已经移动到：
+
+```text
+src/kms/pipeline_stages/
+  sync.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `pipeline_stages/sync.py` | 生成外部系统可消费的 `SyncView`，包括阻塞原因、待确认项和最终安全事实 |
+
+`pipeline.py` 仍保留 `sync` 导出，避免破坏 `KernelEngine.get_sync_view()`。
+
+架构边界不变：Sync 仍由 KMS 组装；Kernel 只保存状态，外部系统只读取同步视图。

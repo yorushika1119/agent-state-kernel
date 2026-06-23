@@ -39,6 +39,7 @@
 | `pipeline_stages/event_log.py` | EventLog 前置：event metadata 分配 | 保留 | 属于 KMS 9 阶段 pipeline |
 | `pipeline_stages/summarize.py` | Summarize 阶段：刷新和生成进度摘要 | 保留 | 属于 KMS 9 阶段 pipeline |
 | `pipeline_stages/gate.py` | Gate 阶段：Talker 输出可见性和安全检查 | 保留 | 属于 KMS 9 阶段 pipeline |
+| `pipeline_stages/sync.py` | Sync 阶段：生成外部同步视图 | 保留 | 属于 KMS 9 阶段 pipeline |
 | `audit/state_source.py` | 新旧状态来源审计 | 保留 | 旧表退场前需要 |
 | `pipeline.py` | KMS 事件 pipeline | 保留但偏大 | 后续单独拆，不和 dispatch 混在一起 |
 | `decisioning/intent_classifier.py` | 用户消息意图判断 | 保留 | 属于 KMS 判断能力 |
@@ -94,6 +95,7 @@ src/kms/
     event_log.py
     summarize.py
     gate.py
+    sync.py
   notification/
     coordinator.py
   audit/
