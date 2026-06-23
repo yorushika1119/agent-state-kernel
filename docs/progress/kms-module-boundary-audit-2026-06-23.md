@@ -22,10 +22,10 @@
 | `routing/task_routing.py` | observe user session、读取 global tasks、调用 router | 保留 | 已移动到 `kms/routing/` |
 | `routing/task_context_router.py` | 具体路由规则和 LLM route | 保留 | 已移动到 `kms/routing/`，后续可拆 rule/llm/score |
 | `task/coordinators.py` | interrupt/resume/task switch | 保留 | 后续可按 `interrupt.py`、`resume.py` 拆分，但不急 |
-| `kernel_direct_responder.py` | 从 Kernel 状态生成直接回复文本 | 保留 | 属于 KMS 直接回答能力 |
+| `response/kernel_direct_responder.py` | 从 Kernel 状态生成直接回复文本 | 保留 | 属于 KMS 直接回答能力 |
 | `dispatch/response.py` | 包装澄清、Kernel 直接回复、no-resume 回复 | 保留 | 已移动到 `kms/dispatch/` |
-| `kernel_direct_reply_coordinator.py` | 记录 Kernel 直接回复 conversation ref | 暂留 | 作为 `DispatchResponseCoordinator` 的底层 helper |
-| `route_clarification_coordinator.py` | 生成澄清问题并记录引用 | 暂留 | 作为 `DispatchResponseCoordinator` 的底层 helper |
+| `response/direct_reply.py` | 记录 Kernel 直接回复 conversation ref | 暂留 | 作为 `DispatchResponseCoordinator` 的底层 helper |
+| `response/clarification.py` | 生成澄清问题并记录引用 | 暂留 | 作为 `DispatchResponseCoordinator` 的底层 helper |
 | `conversation_ref_coordinator.py` | conversation refs 统一写入 | 保留 | 不应分散到多个模块 |
 | `notification_coordinator.py` | observer/talker 通知策略 | 保留 | 独立职责明确 |
 | `task/scoped_state.py` | task-local 状态过滤 | 保留 | 支撑直接回复和视图 |
@@ -59,6 +59,7 @@ src/kms/
     task_routing.py
     task_context_router.py
   response/
+    kernel_direct_responder.py
     direct_reply.py
     clarification.py
   task/
@@ -78,7 +79,7 @@ src/kms/
 | 候选 | 原因 | 建议时机 |
 |---|---|---|
 | `thinker_dispatch_coordinator.py` | 文件较小，和 dispatch execution 强相关 | dispatch 生命周期完全稳定后 |
-| `kernel_direct_reply_coordinator.py` + `route_clarification_coordinator.py` | 都是在包装 KMS 直接返回并记录 conversation ref | 新增 `DispatchResponseCoordinator` 时 |
+| `response/direct_reply.py` + `response/clarification.py` | 都是在包装 KMS 直接返回并记录 conversation ref | response 接口稳定后 |
 | `task_context_router.py` 内部规则 | 文件较大，规则/LLM/候选评分混在一起 | Router 行为继续扩展时 |
 | `pipeline.py` | 文件很大，包含 normalize/reduce/gate/sync | 旧表物理删除后 |
 
@@ -96,4 +97,4 @@ src/kms/
 
 ## 下一步建议
 
-`DispatchResponseCoordinator` 已完成，`src/kms/dispatch/`、`src/kms/routing/` 和 `src/kms/task/` 目录分组也已完成。下一步不要继续增加散落文件，建议观察一轮后再考虑 `response/`、`notification/` 或 `audit/` 目录分组。
+`DispatchResponseCoordinator` 已完成，`src/kms/dispatch/`、`src/kms/routing/`、`src/kms/task/` 和 `src/kms/response/` 目录分组也已完成。下一步不要继续增加散落文件，建议观察一轮后再考虑 `notification/` 或 `audit/` 目录分组。

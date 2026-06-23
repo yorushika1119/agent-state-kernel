@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
-from src.kms.kernel_direct_reply_coordinator import KernelDirectReplyCoordinator
+from src.kms.response.direct_reply import KernelDirectReplyCoordinator
 from src.schema.state import TaskRouteDecision
 from src.stores.sqlite_store import SqliteStore
 

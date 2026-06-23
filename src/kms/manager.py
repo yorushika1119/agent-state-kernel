@@ -14,10 +14,10 @@ from src.kms.dispatch.execution import DispatchExecutionCoordinator
 from src.kms.dispatch.lifecycle import DispatchLifecycleCoordinator
 from src.kms.dispatch.preparation import DispatchPreparationCoordinator
 from src.kms.dispatch.response import DispatchResponseCoordinator
-from src.kms.kernel_direct_reply_coordinator import KernelDirectReplyCoordinator
-from src.kms.kernel_direct_responder import KernelDirectResponder
 from src.kms.kernel_session_coordinator import KernelSessionCoordinator
-from src.kms.route_clarification_coordinator import RouteClarificationCoordinator
+from src.kms.response.clarification import RouteClarificationCoordinator
+from src.kms.response.direct_reply import KernelDirectReplyCoordinator
+from src.kms.response.kernel_direct_responder import KernelDirectResponder
 from src.kms.task.coordinators import (
     InterruptCoordinator,
     ResumeCoordinator,

@@ -500,3 +500,24 @@ src/kms/task/
 | `task/scoped_state.py` | 给 Kernel 直接回复过滤 task-local 状态 |
 
 这一步仍然只是 KMS 内部目录整理，不改变用户消息调度语义。
+
+## 21. 2026-06-23 Response 目录分组
+
+KMS 的直接回复和澄清回复模块已经统一到：
+
+```text
+src/kms/response/
+  kernel_direct_responder.py
+  direct_reply.py
+  clarification.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `response/kernel_direct_responder.py` | 从 Kernel 状态生成无需 Thinker 的回复文本 |
+| `response/direct_reply.py` | 记录 Kernel 直接回复的 conversation refs |
+| `response/clarification.py` | 生成任务路由澄清问题并记录 conversation refs |
+
+这一步只是把 KMS 的直接响应能力集中起来，不改变 `respond_from_kernel` 和 `ask_clarification` 的行为。

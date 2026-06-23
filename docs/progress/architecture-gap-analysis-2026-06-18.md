@@ -549,7 +549,7 @@ python -m pytest -q tests/test_task_directory_router.py tests/test_intent_classi
 
 新增：
 
-- `src/kms/kernel_direct_responder.py`
+- `src/kms/response/kernel_direct_responder.py`
   - 负责从 Kernel 状态直接构造回复；
   - 覆盖 progress / failures / evidence / resume / run；
   - 不唤醒 Thinker。
@@ -2095,6 +2095,41 @@ python -m pytest -o addopts='' -q tests\test_task_directory_router.py tests\test
 ```text
 python -m pytest -o addopts='' -q tests\test_task_switch_coordinator.py tests\test_dispatch_execution.py tests\test_task_directory_router.py tests\test_smoke_interrupt.py
 29 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
+
+## 2026-06-23：KMS response 目录分组迁移
+
+本阶段继续做结构整理，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/response/` 子目录。
+- 为什么改：Kernel 直接回复、直接回复记录、路由澄清回复都属于 KMS 面向用户的响应包装能力，不应该继续散落在 `src/kms` 根目录。
+- 改完什么样：response 相关模块统一归到 response 包里，`DispatchResponseCoordinator` 继续负责把回复包装成 KMS dispatch decision。
+
+移动结果：
+
+| 原位置 | 新位置 |
+|---|---|
+| `src/kms/kernel_direct_responder.py` | `src/kms/response/kernel_direct_responder.py` |
+| `src/kms/kernel_direct_reply_coordinator.py` | `src/kms/response/direct_reply.py` |
+| `src/kms/route_clarification_coordinator.py` | `src/kms/response/clarification.py` |
+
+架构边界审查：
+
+- 仍是 KMS 内部响应包装能力。
+- Kernel 只提供状态，不决定是否直接回复。
+- Thinker 不会因为直接回复或澄清被唤醒。
+- Talker/Observer 仍只消费返回结果和 notification。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' -q tests\test_kernel_direct_reply_coordinator.py tests\test_route_clarification_coordinator.py tests\test_dispatch_response.py tests\test_dispatch_execution.py tests\test_task_directory_router.py tests\test_smoke_interrupt.py
+32 passed
 
 python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
 79 passed

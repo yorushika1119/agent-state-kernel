@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.kms.route_clarification_coordinator import RouteClarificationCoordinator
+from src.kms.response.clarification import RouteClarificationCoordinator
 from src.schema.state import TaskRouteDecision
 from src.stores.sqlite_store import SqliteStore
 
