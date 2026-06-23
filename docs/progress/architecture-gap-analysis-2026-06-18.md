@@ -1686,3 +1686,63 @@ active_run=empty
 - 旧表不再承担新写入职责。
 - 旧表仍不能物理删除，因为历史库读取 fallback 还在。
 - 下一步应继续观察旧表 fallback 的真实使用情况，再决定是否做物理删表迁移。
+
+## 2026-06-23：旧表 fallback 使用审计
+
+本阶段继续推进旧表退场，但不直接删除旧表。目标是先知道真实运行中是否还会读旧表。
+
+代码变化：
+
+- 新增 `legacy_state_fallback_audits` 表。
+- `get_intent()` 只有在读取 `intent_states` 时记录 `task_brief` fallback 命中。
+- `get_plan()` 只有在读取 `plan_states` 时记录 `task_flow` fallback 命中。
+- `get_beliefs()` 只有在读取 `belief_items` 时记录 `claim` fallback 命中。
+- `get_commitments()` 只有在读取 `commitments` 时记录 `todo` fallback 命中。
+- `/kms/state-source-audit` 新增：
+  - `legacy_fallback_observed`
+  - `legacy_fallback_hit_count`
+  - `legacy_fallback_hits`
+
+测试变化：
+
+- 新增旧表 fallback 命中审计回归。
+- 新增新表主读路径不产生 fallback 命中的断言。
+- API 测试改为挂载内存 Kernel，保证审计接口读取真实 store。
+
+验证结果：
+
+```text
+python -m py_compile src\stores\sqlite_store.py src\kms\state_source_audit.py src\api\server.py
+passed
+
+python -m pytest -o addopts='' -q tests\test_state_primary_read_switch.py tests\test_state_source_audit.py
+9 passed in 1.49s
+
+python scripts\test_core.py
+76 passed in 35.71s
+
+python scripts\test_integration.py
+112 passed in 118.12s
+
+python scripts\live_llm_router_smoke.py
+FINAL_DECISION=select_existing
+OTHER_STATUS_ACTION=respond_from_kernel
+OTHER_STATUS_REQUIRES_THINKER=False
+EXPLICIT_NEW_TASK_ACTION=start_new_task
+
+python scripts\live_interrupt_demo.py --real-model --scenario interrupt
+ARCHITECTURE_GLOSSARY_CHECK: passed
+old dispatch=failed
+new dispatch=completed
+active_run=empty
+
+data/kernel.db fallback audit
+LEGACY_FALLBACK_AUDIT_ROWS=0
+```
+
+当前结论：
+
+- 旧表 fallback 已经可以被观测。
+- 本轮 core / integration / 真实 smoke 未发现真实旧表 fallback 命中。
+- 这还不等于可以马上物理删旧表，因为真实历史 DB 可能仍有未覆盖路径。
+- 下一步应继续保留审计，积累更多真实运行证据，再做物理删表方案。

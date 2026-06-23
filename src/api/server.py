@@ -717,7 +717,9 @@ async def resolve_talker_notification(notification_id: str):
 
 @app.get("/kms/state-source-audit")
 async def get_state_source_audit():
-    return StateSourceAudit().as_dict()
+    store = get_engine().store
+    legacy_hits = await store.get_legacy_state_fallback_audit()
+    return StateSourceAudit().as_dict(legacy_fallback_hits=legacy_hits)
 
 
 @app.get("/kernel/sessions/{session_id}/events")

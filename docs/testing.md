@@ -40,10 +40,10 @@ python scripts/test_fast.py
 43 passed in 18.68s
 
 python scripts/test_core.py
-74 passed in 52.60s
+76 passed in 35.71s
 
 python scripts/test_integration.py
-111 passed in 200.09s
+112 passed in 118.12s
 
 python scripts/test_full.py
 117 passed in 154.26s

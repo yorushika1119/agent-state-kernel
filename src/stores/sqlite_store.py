@@ -380,6 +380,19 @@ class SqliteStore:
             )
         """)
 
+        # ── 15b. Legacy State Fallback Audit ──
+        await self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS legacy_state_fallback_audits (
+                kernel_session_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                legacy_table TEXT NOT NULL,
+                hit_count INTEGER DEFAULT 0,
+                first_hit_at TEXT,
+                last_hit_at TEXT,
+                PRIMARY KEY (kernel_session_id, model, legacy_table)
+            )
+        """)
+
         # ── 16. Task Brief State ──
         await self.conn.execute("""
             CREATE TABLE IF NOT EXISTS task_brief_states (
@@ -556,7 +569,35 @@ class SqliteStore:
         await self._ensure_column("observer_notifications", "resolved_at", "TEXT")
 
         await self.conn.commit()
-        logger.info("Tables created (21 tables)")
+        logger.info("Tables created")
+
+    async def _record_legacy_state_fallback(
+        self,
+        session_id: str,
+        model: str,
+        legacy_table: str,
+    ) -> None:
+        now = utc_now_iso()
+        await self.conn.execute(
+            """INSERT INTO legacy_state_fallback_audits
+               (kernel_session_id, model, legacy_table, hit_count, first_hit_at, last_hit_at)
+               VALUES (?, ?, ?, 1, ?, ?)
+               ON CONFLICT(kernel_session_id, model, legacy_table)
+               DO UPDATE SET
+                   hit_count = hit_count + 1,
+                   last_hit_at = excluded.last_hit_at""",
+            (session_id, model, legacy_table, now, now),
+        )
+        await self.conn.commit()
+
+    async def get_legacy_state_fallback_audit(self) -> list[dict]:
+        rows = await self.conn.execute_fetchall(
+            """SELECT kernel_session_id, model, legacy_table, hit_count,
+                      first_hit_at, last_hit_at
+               FROM legacy_state_fallback_audits
+               ORDER BY model, legacy_table, kernel_session_id"""
+        )
+        return [dict(row) for row in rows]
 
     async def _ensure_column(self, table_name: str, column_name: str, ddl: str) -> None:
         rows = await self.conn.execute_fetchall(f"PRAGMA table_info({table_name})")
@@ -999,6 +1040,11 @@ class SqliteStore:
         )
         if not row:
             return None
+        await self._record_legacy_state_fallback(
+            session_id,
+            "task_brief",
+            "intent_states",
+        )
         r = row[0]
         return IntentState(
             intent_version=r["intent_version"],
@@ -1051,6 +1097,11 @@ class SqliteStore:
         )
         if not row:
             return None
+        await self._record_legacy_state_fallback(
+            session_id,
+            "task_flow",
+            "plan_states",
+        )
         r = row[0]
         from src.schema.state import PlanStep
         steps_data = json.loads(r["steps"] or "[]")
@@ -1934,6 +1985,11 @@ class SqliteStore:
             (session_id,),
         )
         if rows:
+            await self._record_legacy_state_fallback(
+                session_id,
+                "claim",
+                "belief_items",
+            )
             return [
                 BeliefItem(
                     belief_id=r["belief_id"],
@@ -2110,6 +2166,11 @@ class SqliteStore:
             (session_id,),
         )
         if rows:
+            await self._record_legacy_state_fallback(
+                session_id,
+                "todo",
+                "commitments",
+            )
             return [
                 Commitment(
                     commitment_id=r["commitment_id"],

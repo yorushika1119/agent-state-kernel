@@ -85,11 +85,19 @@ class StateSourceAudit:
             if not mapping.can_switch_primary
         ]
 
-    def as_dict(self) -> dict:
+    def as_dict(self, legacy_fallback_hits: list[dict] | None = None) -> dict:
+        fallback_hits = legacy_fallback_hits or []
+        fallback_hit_count = sum(
+            int(item.get("hit_count") or 0)
+            for item in fallback_hits
+        )
         return {
             "can_switch_all": self.can_switch_all(),
             "legacy_direct_sql_frozen": self.legacy_direct_sql_frozen,
             "legacy_tables_removable": False,
+            "legacy_fallback_observed": fallback_hit_count > 0,
+            "legacy_fallback_hit_count": fallback_hit_count,
+            "legacy_fallback_hits": fallback_hits,
             "remaining_compat_getter_files": list(REMAINING_COMPAT_GETTER_FILES),
             "mappings": [
                 {

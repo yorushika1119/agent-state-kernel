@@ -264,6 +264,7 @@ ack / resolve
 | task conversation refs | 已完成第一版 |
 | 新状态表主读和写入 | 已完成 |
 | 旧状态表写入退场 | 已完成，integration 和真实 smoke 通过 |
+| 旧表 fallback 使用审计 | 已完成第一版，本轮真实链路未命中 |
 | 测试分层 fast / core / integration / full | 已完成 |
 | 真实 Router smoke | 已通过 |
 | 真实 Hermes interrupt smoke | 已通过 |
@@ -284,6 +285,7 @@ ack / resolve
 | StateSourceAudit 主从切换审查 | 已完成第一版 |
 | legacy_debug 收窄到 manager/debug | 已完成 |
 | 旧状态表写入退场 | 已完成 |
+| 旧表 fallback 使用审计 | 已完成第一版 |
 | 测试分层 | 已完成 |
 | 移除旧表写入后的 integration / real smoke | 已通过 |
 
@@ -297,7 +299,7 @@ ack / resolve
 | Runtime Event Adapter 深度接入 Hermes | 通用 Adapter 已有，真实 Hermes 侧还可继续接入更多 runtime refs |
 | Observer notification WebSocket | SSE 第一版已完成，WebSocket 未做 |
 | Notification 高级优先级策略 | 第一版策略表已完成，复杂升级策略未做 |
-| 旧表读取 fallback | 仍保留，用于历史 DB 兼容 |
+| 旧表读取 fallback | 仍保留，用于历史 DB 兼容；已有命中审计 |
 | 旧表物理删除 | 未做，需要最后评估 |
 
 ## 14. 当前完成度与剩余风险
@@ -314,7 +316,7 @@ ack / resolve
 | User Session 多任务管理 | 80% | user_sessions / global_tasks / conversation refs 已有 |
 | Observer / Manager / Notification | 65% | API / SSE / policy 第一版可用 |
 | 新状态表迁移 | 90% | 新表主读、写入代码已切到新表 |
-| 旧表退场 | 80% | 写入代码已移除，fallback 和物理删除未完成 |
+| 旧表退场 | 82% | 写入代码已移除，fallback 已审计，物理删除未完成 |
 | 测试体系 | 80% | fast / core / integration / full 已分层 |
 
 当前没有发现完成不了的硬阻塞。剩余主要是收尾、加固和产品化。
@@ -322,7 +324,7 @@ ack / resolve
 真正需要谨慎的风险：
 
 - LLM Router 无法保证 100% 不误判，需要保留低置信度澄清和回归样例。
-- 旧表读取 fallback 不能贸然删除，真实历史 DB 可能仍有未迁移数据。
+- 旧表读取 fallback 不能贸然删除，虽然本轮真实链路未命中，但真实历史 DB 可能仍有未迁移数据。
 - Observer/Talker 产品层还需要根据真实 UI/协议继续打磨。
 
 ## 15. 不建议立刻做的事

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -249,6 +250,112 @@ async def test_legacy_state_table_writes_are_disabled_by_default():
         assert thinker_view["task_flow"]["flow_id"] == "plan_new_only"
         assert thinker_view["claims"][0]["claim"] == "new table claim"
         assert thinker_view["todos"][0]["statement"] == "new table todo"
+        assert await store.get_legacy_state_fallback_audit() == []
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_legacy_state_fallback_audit_records_compat_reads():
+    store, engine = await build_runtime()
+    try:
+        session = await store.create_session(agent_id="agent-legacy-fallback-audit")
+        session_id = session.kernel_session_id
+        await store.conn.execute(
+            """INSERT INTO intent_states
+               (kernel_session_id, intent_version, goal, constraints,
+                output_format, priority, cancelled, last_user_update_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                session_id,
+                2,
+                "legacy goal",
+                json.dumps([], ensure_ascii=False),
+                "",
+                "normal",
+                0,
+                None,
+                "2026-06-23T00:00:00+00:00",
+            ),
+        )
+        await store.conn.execute(
+            """INSERT INTO plan_states
+               (kernel_session_id, plan_id, status, current_step, steps,
+                intent_version, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                session_id,
+                "legacy_plan",
+                PlanStatus.ACTIVE.value,
+                "legacy_step",
+                json.dumps(
+                    [
+                        {
+                            "step_id": "legacy_step",
+                            "name": "legacy step",
+                            "status": StepStatus.RUNNING.value,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                2,
+                "2026-06-23T00:00:00+00:00",
+            ),
+        )
+        await store.conn.execute(
+            """INSERT INTO belief_items
+               (belief_id, kernel_session_id, claim, status, confidence,
+                supporting_evidence, conflicting_evidence, visibility,
+                last_verified_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "legacy_claim",
+                session_id,
+                "legacy claim",
+                BeliefStatus.VERIFIED.value,
+                0.8,
+                json.dumps([], ensure_ascii=False),
+                json.dumps([], ensure_ascii=False),
+                "shared",
+                None,
+                "2026-06-23T00:00:00+00:00",
+            ),
+        )
+        await store.conn.execute(
+            """INSERT INTO commitments
+               (commitment_id, kernel_session_id, statement, created_by,
+                status, requires_confirmation, related_intent_version,
+                resolved_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "legacy_todo",
+                session_id,
+                "legacy todo",
+                "talker",
+                CommitmentStatus.PENDING.value,
+                1,
+                2,
+                None,
+                "2026-06-23T00:00:00+00:00",
+            ),
+        )
+        await store.conn.commit()
+
+        assert (await store.get_intent(session_id)).goal == "legacy goal"
+        assert (await store.get_plan(session_id)).plan_id == "legacy_plan"
+        assert (await store.get_beliefs(session_id))[0].claim == "legacy claim"
+        assert (await store.get_commitments(session_id))[0].statement == "legacy todo"
+
+        audit = await store.get_legacy_state_fallback_audit()
+        by_model = {
+            row["model"]: row
+            for row in audit
+        }
+        assert by_model["task_brief"]["legacy_table"] == "intent_states"
+        assert by_model["task_flow"]["legacy_table"] == "plan_states"
+        assert by_model["claim"]["legacy_table"] == "belief_items"
+        assert by_model["todo"]["legacy_table"] == "commitments"
+        assert all(row["hit_count"] == 1 for row in by_model.values())
     finally:
         await store.close()
 

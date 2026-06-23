@@ -62,6 +62,7 @@ Talker / Hermes
 | 测试分层 | fast / core / integration / full 已建立 |
 | 新状态表主读 | 已完成 |
 | 旧状态表写入退场 | 已完成 |
+| 旧表 fallback 使用审计 | 已完成第一版，本轮真实链路未命中 |
 
 ## 4. 最近完成的阶段
 
@@ -126,7 +127,7 @@ active_run=empty
 | User Session 多任务管理 | 80% | user_sessions / global_tasks / conversation refs 已有 |
 | Observer / Manager / Notification | 65% | API / SSE / policy 第一版可用 |
 | 新状态表迁移 | 90% | 新表主读，写入代码已切到新表 |
-| 旧表退场 | 80% | 写入代码已移除，读取 fallback 和物理删表未做 |
+| 旧表退场 | 82% | 写入代码已移除，读取 fallback 已审计，物理删表未做 |
 | 测试体系 | 80% | fast / core / integration / full 已分层 |
 
 当前没有发现完成不了的硬阻塞。剩下主要是收尾、加固和产品化。
@@ -135,7 +136,7 @@ active_run=empty
 
 | 下一步 | 原因 |
 |---|---|
-| 观察旧表 fallback 是否仍被真实使用 | 决定后续能不能物理删除旧表 |
+| 继续观察旧表 fallback 审计数据 | 决定后续能不能物理删除旧表 |
 | 继续拆 `KmsManager` | 当前仍偏大，调度分支还集中 |
 | Runtime Event Adapter 深度接 Hermes | 通用封装已有，真实 Hermes 事件还可接得更完整 |
 | Observer notification WebSocket | SSE 第一版有了，WebSocket 未做 |
@@ -176,20 +177,21 @@ active_run=empty
 
 ## 10. 下一步建议
 
-建议下一步先做：
+上一轮建议的 fallback 使用审计已经完成第一版：
 
 ```text
-旧表 fallback 使用审计
+legacy_state_fallback_audits
 ```
 
-原因：
+当前结果：
 
-- 旧表写入已经退场。
-- 现在真正阻碍物理删表的是读取 fallback。
-- 需要知道真实运行中是否还会读到旧表。
+- core / integration 通过。
+- 真实 LLM Router smoke 通过。
+- 真实 Hermes interrupt smoke 通过。
+- `data/kernel.db` 本轮 fallback audit 行数为 0。
 
-可行做法：
+建议下一步：
 
-- 在旧表 fallback 读取路径增加轻量统计或日志。
-- 跑 core / integration / 真实 smoke。
-- 如果没有 fallback 命中，再评估物理删表迁移。
+- 暂时不要物理删除旧表。
+- 继续保留 fallback 审计。
+- 累积更多真实运行数据后，再做旧表物理删除方案。

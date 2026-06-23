@@ -10,7 +10,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.api import server as api_server
+from src.kernel.engine import KernelEngine
 from src.kms.state_source_audit import StateSourceAudit
+from src.stores.sqlite_store import SqliteStore
 
 
 def test_state_source_audit_reports_primary_read_switch_complete():
@@ -20,6 +22,9 @@ def test_state_source_audit_reports_primary_read_switch_complete():
     assert report["can_switch_all"] is True
     assert report["legacy_direct_sql_frozen"] is True
     assert report["legacy_tables_removable"] is False
+    assert report["legacy_fallback_observed"] is False
+    assert report["legacy_fallback_hit_count"] == 0
+    assert report["legacy_fallback_hits"] == []
     assert "src/kms/pipeline.py" not in report["remaining_compat_getter_files"]
     assert "src/kernel/engine.py" in report["remaining_compat_getter_files"]
     assert {item["new_model"] for item in report["mappings"]} == {
@@ -96,19 +101,28 @@ def test_business_code_does_not_call_legacy_state_getters():
 
 
 @pytest.mark.asyncio
-async def test_state_source_audit_api_exposes_current_switch_decision():
-    transport = httpx.ASGITransport(app=api_server.app)
-    async with httpx.AsyncClient(
-        transport=transport,
-        base_url="http://kernel.test",
-    ) as client:
-        response = await client.get("/kms/state-source-audit")
+async def test_state_source_audit_api_exposes_current_switch_decision(monkeypatch):
+    store = SqliteStore(":memory:")
+    await store.connect()
+    monkeypatch.setattr(api_server, "_store", store)
+    monkeypatch.setattr(api_server, "_engine", KernelEngine(store))
+    try:
+        transport = httpx.ASGITransport(app=api_server.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://kernel.test",
+        ) as client:
+            response = await client.get("/kms/state-source-audit")
+    finally:
+        await store.close()
 
     assert response.status_code == 200
     data = response.json()
     assert data["can_switch_all"] is True
     assert data["legacy_direct_sql_frozen"] is True
     assert data["legacy_tables_removable"] is False
+    assert isinstance(data["legacy_fallback_hits"], list)
+    assert isinstance(data["legacy_fallback_hit_count"], int)
     assert "src/stores/sqlite_store.py" in data["remaining_compat_getter_files"]
     assert {item["shadow_table"] for item in data["mappings"]} == {
         "task_brief_states",
