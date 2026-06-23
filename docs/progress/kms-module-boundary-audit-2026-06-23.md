@@ -30,6 +30,7 @@
 | `notification/coordinator.py` | observer/talker 通知策略 | 保留 | 独立职责明确 |
 | `task/scoped_state.py` | task-local 状态过滤 | 保留 | 支撑直接回复和视图 |
 | `state/aliases.py` | task-first 状态到 reducer 旧对象形状的适配 | 保留 | 属于 KMS pipeline 内部兼容层 |
+| `runtime/references.py` | runtime message/tool/result 引用索引 | 保留 | 属于 Runtime Event Adapter 边界 |
 | `audit/state_source.py` | 新旧状态来源审计 | 保留 | 旧表退场前需要 |
 | `pipeline.py` | KMS 事件 pipeline | 保留但偏大 | 后续单独拆，不和 dispatch 混在一起 |
 | `decisioning/intent_classifier.py` | 用户消息意图判断 | 保留 | 属于 KMS 判断能力 |
@@ -74,6 +75,8 @@ src/kms/
     scoped_state.py
   state/
     aliases.py
+  runtime/
+    references.py
   notification/
     coordinator.py
   audit/

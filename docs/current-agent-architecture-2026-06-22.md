@@ -635,3 +635,20 @@ src/kms/state/
 | `state/aliases.py` | 把 `task_brief/task_flow/claim/todo` 转成现有 reducer 可复用的对象形状 |
 
 这一步不是让 KMS 接管 Kernel 状态，而是把 pipeline 内部的兼容适配从主流程里拆出来。
+
+## 28. 2026-06-23 Runtime References 拆分
+
+KMS pipeline 内部的 runtime reference 注册逻辑已经移动到：
+
+```text
+src/kms/runtime/
+  references.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `runtime/references.py` | 把 runtime message/tool/result/checkpoint/process 引用写入 `runtime_refs` 索引 |
+
+这一步符合设计文档里“Kernel 不保存完整 runtime transcript，只保存可追踪引用”的边界。

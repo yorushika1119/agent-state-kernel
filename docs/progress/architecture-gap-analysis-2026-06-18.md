@@ -2100,6 +2100,42 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 79 passed
 ```
 
+## 2026-06-23：KMS runtime references 拆分
+
+本阶段继续拆 `pipeline.py` 内部小块，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/runtime/references.py`。
+- 为什么改：runtime message/tool/result 引用注册属于 Runtime Event Adapter 边界，不是 pipeline 主流程本身。
+- 改完什么样：`pipeline.py` 仍然对外暴露 `register_runtime_references`，但具体实现放到 runtime 包。
+
+移动结果：
+
+| 原函数 | 新位置 |
+|---|---|
+| `_runtime_ref_summary` | `src/kms/runtime/references.py` |
+| `_extract_runtime_ref_values` | `src/kms/runtime/references.py` |
+| `register_runtime_references` | `src/kms/runtime/references.py` |
+
+架构边界审查：
+
+- Kernel 仍只保存 runtime refs 索引，不保存完整 transcript。
+- KMS pipeline 仍负责事件进入后的引用登记。
+- 外部 API 导入路径保持兼容。
+
+验证结果：
+
+```text
+python -m py_compile src\kms\pipeline.py src\kms\runtime\references.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider -q tests\test_pipeline_event_flow.py tests\test_missing_coverage.py tests\test_smoke_interrupt.py
+35 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
+
 ## 2026-06-23：KMS transport 目录分组迁移
 
 本阶段继续做结构整理，不改行为。
