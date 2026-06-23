@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
+from src.kms.dispatch_decision import (
+    DispatchDecision,
+    kernel_response_decision,
+    thinker_run_decision,
+)
 from src.kms.dispatch_lifecycle_coordinator import DispatchLifecycleCoordinator
 from src.kms.dispatch_context import build_kernel_dispatch_context
 from src.kms.intent_classifier import classify_dispatch_intent_with_llm
@@ -21,24 +25,6 @@ from src.kms.task_coordinators import (
 )
 from src.kms.task_routing_coordinator import TaskRoutingCoordinator
 from src.kms.thinker_dispatch_coordinator import ThinkerDispatchCoordinator
-
-
-@dataclass
-class DispatchDecision:
-    action: str
-    kernel_session_id: str
-    intent_version: int
-    run_id: str
-    session_status: str
-    reason: str = ""
-    task_action: str = ""
-    task_id: str = ""
-    requires_thinker: bool = True
-    kernel_response: str = ""
-    resume_context: Dict[str, Any] = field(default_factory=dict)
-    user_session_id: str = ""
-    route_decision: str = ""
-    thinker_dispatch_id: str = ""
 
 
 class KmsManager:
@@ -158,8 +144,7 @@ class KmsManager:
                 route=route,
                 runtime_refs=runtime_refs,
             )
-            return DispatchDecision(
-                action="respond_from_kernel",
+            return kernel_response_decision(
                 kernel_session_id=session.kernel_session_id if session else "",
                 intent_version=await self._task_brief_version_for_session(session),
                 run_id=session.active_run_id if session else "",
@@ -167,7 +152,6 @@ class KmsManager:
                 reason="task_route_needs_clarification",
                 task_action="ask_clarification",
                 task_id=session.active_task_id if session else "",
-                requires_thinker=False,
                 kernel_response=clarification_response,
                 user_session_id=user_session.user_session_id,
                 route_decision=route.routing_decision,
@@ -188,8 +172,7 @@ class KmsManager:
                 target_task_id=response_task_id,
                 runtime_refs=runtime_refs,
             )
-            return DispatchDecision(
-                action="respond_from_kernel",
+            return kernel_response_decision(
                 kernel_session_id=session.kernel_session_id,
                 intent_version=await self._task_brief_version_for_session(session),
                 run_id=session.active_run_id or "",
@@ -197,7 +180,6 @@ class KmsManager:
                 reason=intent.reason or "kernel_direct_status_reply",
                 task_action="respond_from_kernel",
                 task_id=response_task_id,
-                requires_thinker=False,
                 kernel_response=kernel_response,
                 user_session_id=user_session.user_session_id,
                 route_decision=route.routing_decision,
@@ -316,8 +298,7 @@ class KmsManager:
                         "reason": "no_paused_task_to_resume",
                     },
                 )
-                return DispatchDecision(
-                    action="respond_from_kernel",
+                return kernel_response_decision(
                     kernel_session_id=session.kernel_session_id,
                     intent_version=current_task_brief_version,
                     run_id=session.active_run_id or "",
@@ -325,7 +306,6 @@ class KmsManager:
                     reason="no_paused_task_to_resume",
                     task_action="respond_from_kernel",
                     task_id=session.active_task_id or "",
-                    requires_thinker=False,
                     kernel_response=response_text,
                     user_session_id=user_session.user_session_id,
                     route_decision=route.routing_decision,
@@ -425,7 +405,7 @@ class KmsManager:
                 runtime_refs=runtime_refs,
             )
 
-        return DispatchDecision(
+        return thinker_run_decision(
             action=action,
             kernel_session_id=session.kernel_session_id,
             intent_version=refreshed_task_brief_version,

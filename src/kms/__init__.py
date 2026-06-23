@@ -1,5 +1,6 @@
 """Public KMS package."""
 
-from src.kms.manager import DispatchDecision, KmsManager
+from src.kms.dispatch_decision import DispatchDecision
+from src.kms.manager import KmsManager
 
 __all__ = ["DispatchDecision", "KmsManager"]

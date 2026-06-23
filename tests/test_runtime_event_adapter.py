@@ -117,3 +117,104 @@ async def test_runtime_event_adapter_records_external_conversation_ref():
             "metadata": {},
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_event_adapter_submits_hermes_tool_events():
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.read().decode())
+        requests.append((request.url.path, payload))
+        return httpx.Response(200, json={"ok": True})
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://kernel.test",
+    )
+    async with RuntimeEventAdapter("http://kernel.test", client=client) as adapter:
+        adapter.session_id = "ask_adapter"
+        adapter.run_id = "run_adapter"
+        adapter.intent_version = 4
+        await adapter.submit_tool_started(
+            action_id="act_tool",
+            step_id="step_1",
+            tool="shell",
+            input_summary="run command",
+            runtime_refs={"tool_call_id": "call_1"},
+        )
+        await adapter.submit_tool_completed(
+            action_id="act_tool",
+            step_id="step_1",
+            output_summary="command finished",
+            output_ref="tool-result-1",
+            runtime_refs={"tool_result_ref": "tool-result-1"},
+        )
+        await adapter.submit_tool_failed(
+            action_id="act_fail",
+            step_id="step_2",
+            tool="shell",
+            error="command failed",
+            runtime_refs={"tool_call_id": "call_2"},
+        )
+
+    assert [item[1]["request_type"] for item in requests] == [
+        "ToolStarted",
+        "ToolCompleted",
+        "ToolFailed",
+    ]
+    assert requests[0] == (
+        "/kms/request",
+        {
+            "session_id": "ask_adapter",
+            "component": "thinker",
+            "request_type": "ToolStarted",
+            "payload": {
+                "action_id": "act_tool",
+                "step_id": "step_1",
+                "tool": "shell",
+                "input_summary": "run command",
+                "runtime_refs": {"tool_call_id": "call_1"},
+            },
+            "run_id": "run_adapter",
+            "intent_version": 4,
+            "runtime_refs": {"tool_call_id": "call_1"},
+        },
+    )
+    assert requests[1][1]["payload"]["output_ref"] == "tool-result-1"
+    assert requests[2][1]["payload"]["error"] == "command failed"
+
+
+@pytest.mark.asyncio
+async def test_runtime_event_adapter_submits_hermes_summary_events():
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.read().decode())
+        requests.append(payload)
+        return httpx.Response(200, json={"ok": True})
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://kernel.test",
+    )
+    async with RuntimeEventAdapter("http://kernel.test", client=client) as adapter:
+        adapter.session_id = "ask_adapter"
+        adapter.run_id = "run_adapter"
+        await adapter.submit_reasoning_summary(
+            "checked available context",
+            runtime_refs={"message_id": "reasoning-1"},
+        )
+        await adapter.submit_raw_result(
+            "raw-result-1",
+            result_summary="final raw result available",
+            runtime_refs={"message_id": "raw-1"},
+        )
+
+    assert requests[0]["request_type"] == "ReasoningSummary"
+    assert requests[0]["payload"] == {
+        "summary": "checked available context",
+        "runtime_refs": {"message_id": "reasoning-1"},
+    }
+    assert requests[1]["request_type"] == "RawResultAvailable"
+    assert requests[1]["payload"]["result_ref"] == "raw-result-1"

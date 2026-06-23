@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Optional
 
 import httpx
@@ -103,6 +104,107 @@ class RuntimeEventAdapter:
         )
         response.raise_for_status()
         return response.json()
+
+    async def submit_tool_started(
+        self,
+        *,
+        step_id: str = "",
+        tool: str,
+        input_summary: str = "",
+        action_id: str = "",
+        runtime_refs: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        refs = runtime_refs or {}
+        resolved_action_id = action_id or refs.get("tool_call_id") or f"act_{uuid.uuid4().hex[:8]}"
+        return await self.submit_event(
+            "ToolStarted",
+            payload={
+                "action_id": resolved_action_id,
+                "step_id": step_id,
+                "tool": tool,
+                "input_summary": input_summary,
+                "runtime_refs": refs,
+            },
+            runtime_refs=refs,
+        )
+
+    async def submit_tool_completed(
+        self,
+        *,
+        action_id: str,
+        step_id: str = "",
+        output_summary: str = "",
+        output_ref: str = "",
+        runtime_refs: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        refs = runtime_refs or {}
+        return await self.submit_event(
+            "ToolCompleted",
+            payload={
+                "action_id": action_id,
+                "step_id": step_id,
+                "output_summary": output_summary,
+                "output_ref": output_ref,
+                "runtime_refs": refs,
+            },
+            runtime_refs=refs,
+        )
+
+    async def submit_tool_failed(
+        self,
+        *,
+        action_id: str,
+        step_id: str = "",
+        tool: str = "",
+        error: str,
+        runtime_refs: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        refs = runtime_refs or {}
+        return await self.submit_event(
+            "ToolFailed",
+            payload={
+                "action_id": action_id,
+                "step_id": step_id,
+                "tool": tool,
+                "error": error,
+                "runtime_refs": refs,
+            },
+            runtime_refs=refs,
+        )
+
+    async def submit_reasoning_summary(
+        self,
+        summary: str,
+        *,
+        runtime_refs: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        refs = runtime_refs or {}
+        return await self.submit_event(
+            "ReasoningSummary",
+            payload={
+                "summary": summary,
+                "runtime_refs": refs,
+            },
+            runtime_refs=refs,
+        )
+
+    async def submit_raw_result(
+        self,
+        result_ref: str,
+        *,
+        result_summary: str = "",
+        runtime_refs: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        refs = runtime_refs or {}
+        return await self.submit_event(
+            "RawResultAvailable",
+            payload={
+                "result_ref": result_ref,
+                "result_summary": result_summary,
+                "runtime_refs": refs,
+            },
+            runtime_refs=refs,
+        )
 
     async def claim_thinker_dispatch(
         self,

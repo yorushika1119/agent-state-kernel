@@ -1746,3 +1746,75 @@ LEGACY_FALLBACK_AUDIT_ROWS=0
 - 本轮 core / integration / 真实 smoke 未发现真实旧表 fallback 命中。
 - 这还不等于可以马上物理删旧表，因为真实历史 DB 可能仍有未覆盖路径。
 - 下一步应继续保留审计，积累更多真实运行证据，再做物理删表方案。
+
+## 2026-06-23：fallback audit 查看脚本、KMS 小拆分、Runtime Event Adapter Hermes 事件入口
+
+本阶段按顺序继续推进旧表退场观察、KMS 拆分和 Runtime Event Adapter 接入。
+
+代码变化：
+
+- 新增 `scripts/report_legacy_fallback_audit.py`：
+  - 通过 `SqliteStore` 正常连接 DB；
+  - 输出 fallback audit 行数和总命中数；
+  - 当前真实库输出 `ROWS=0 / HIT_COUNT=0`。
+- 新增 `tests/test_legacy_fallback_audit_report.py`，覆盖空状态和有命中两种输出。
+- 新增 `src/kms/dispatch_decision.py`：
+  - 将 `DispatchDecision` 从 `KmsManager` 拆出；
+  - 将 kernel 直接回复和 thinker run 返回对象组装拆成 helper；
+  - `KmsManager` 仍保留主调度分支，后续还需要继续拆任务切换部分。
+- `RuntimeEventAdapter` 新增 Hermes 常用事件入口：
+  - `submit_tool_started`
+  - `submit_tool_completed`
+  - `submit_tool_failed`
+  - `submit_reasoning_summary`
+  - `submit_raw_result`
+
+新增/调整测试：
+
+- `tests/test_legacy_fallback_audit_report.py`
+- `tests/test_runtime_event_adapter.py`
+- `tests/test_task_directory_router.py`
+- `tests/test_smoke_interrupt.py`
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' -q tests\test_legacy_fallback_audit_report.py tests\test_state_primary_read_switch.py tests\test_state_source_audit.py
+11 passed in 2.29s
+
+python -m pytest -o addopts='' -q tests\test_task_directory_router.py tests\test_smoke_interrupt.py
+24 passed in 60.87s
+
+python -m pytest -o addopts='' -q tests\test_runtime_event_adapter.py
+4 passed in 0.33s
+
+python scripts\test_core.py
+78 passed in 37.00s
+
+python scripts\test_integration.py
+114 passed in 123.34s
+
+python scripts\live_llm_router_smoke.py
+FINAL_DECISION=select_existing
+OTHER_STATUS_ACTION=respond_from_kernel
+OTHER_STATUS_REQUIRES_THINKER=False
+EXPLICIT_NEW_TASK_ACTION=start_new_task
+
+python scripts\live_interrupt_demo.py --real-model --scenario interrupt
+ARCHITECTURE_GLOSSARY_CHECK: passed
+old dispatch=failed
+new dispatch=completed
+active_run=empty
+
+python scripts\report_legacy_fallback_audit.py
+ROWS=0
+HIT_COUNT=0
+NO_LEGACY_FALLBACK_HITS
+```
+
+当前结论：
+
+- fallback audit 已经从“有表”变成“有可运行查看命令”。
+- 本轮多次真实链路仍未命中旧表 fallback。
+- KMS 没有偏离架构设计：调度仍在 KMS，状态事实仍在 Kernel/store。
+- Runtime Event Adapter 更适合真实 Hermes 逐步接入工具事件，但还没有强行改 Hermes 巨型 gateway 主流程。

@@ -62,7 +62,9 @@ Talker / Hermes
 | 测试分层 | fast / core / integration / full 已建立 |
 | 新状态表主读 | 已完成 |
 | 旧状态表写入退场 | 已完成 |
-| 旧表 fallback 使用审计 | 已完成第一版，本轮真实链路未命中 |
+| 旧表 fallback 使用审计 | 已完成第一版，含查看脚本，本轮真实链路未命中 |
+| KmsManager dispatch decision 小拆分 | 已完成第一版 |
+| Runtime Event Adapter Hermes 工具事件入口 | 已完成第一版 |
 
 ## 4. 最近完成的阶段
 
@@ -119,7 +121,7 @@ active_run=empty
 
 | 模块 | 粗略完成度 | 说明 |
 |---|---:|---|
-| KMS / Kernel / Thinker 分层 | 90% | 职责基本清楚 |
+| KMS / Kernel / Thinker 分层 | 91% | 职责基本清楚，dispatch decision 已从 manager 拆出 |
 | 打断与恢复 | 90% | integration 和真实 Hermes smoke 通过 |
 | Thinker dispatch 生命周期 | 85% | claim / heartbeat / complete / fail 已接通 |
 | Task Router 多任务路由 | 75% | 支持常见指代，LLM Router 已接入 |
@@ -127,7 +129,7 @@ active_run=empty
 | User Session 多任务管理 | 80% | user_sessions / global_tasks / conversation refs 已有 |
 | Observer / Manager / Notification | 65% | API / SSE / policy 第一版可用 |
 | 新状态表迁移 | 90% | 新表主读，写入代码已切到新表 |
-| 旧表退场 | 82% | 写入代码已移除，读取 fallback 已审计，物理删表未做 |
+| 旧表退场 | 84% | 写入代码已移除，读取 fallback 已审计且有查看脚本，物理删表未做 |
 | 测试体系 | 80% | fast / core / integration / full 已分层 |
 
 当前没有发现完成不了的硬阻塞。剩下主要是收尾、加固和产品化。
@@ -137,8 +139,8 @@ active_run=empty
 | 下一步 | 原因 |
 |---|---|
 | 继续观察旧表 fallback 审计数据 | 决定后续能不能物理删除旧表 |
-| 继续拆 `KmsManager` | 当前仍偏大，调度分支还集中 |
-| Runtime Event Adapter 深度接 Hermes | 通用封装已有，真实 Hermes 事件还可接得更完整 |
+| 继续拆 `KmsManager` 任务切换分支 | dispatch decision 已拆出，但主分支仍偏长 |
+| Runtime Event Adapter 深度接 Hermes | 工具/summary/raw result 方法已有，真实 Hermes gateway 还可继续逐步接入 |
 | Observer notification WebSocket | SSE 第一版有了，WebSocket 未做 |
 | Notification 高级策略 | 当前只是第一版，复杂升级/优先级还可增强 |
 | 旧表物理删除 | 最后阶段再做，需要确认历史数据迁移和 fallback 使用情况 |
@@ -189,9 +191,13 @@ legacy_state_fallback_audits
 - 真实 LLM Router smoke 通过。
 - 真实 Hermes interrupt smoke 通过。
 - `data/kernel.db` 本轮 fallback audit 行数为 0。
+- `scripts/report_legacy_fallback_audit.py` 已可直接查看命中情况。
+- `DispatchDecision` 已从 `KmsManager` 拆出到 `src/kms/dispatch_decision.py`。
+- `RuntimeEventAdapter` 已支持 Hermes 常见工具事件和 summary/raw result 事件提交。
 
 建议下一步：
 
 - 暂时不要物理删除旧表。
 - 继续保留 fallback 审计。
 - 累积更多真实运行数据后，再做旧表物理删除方案。
+- 下一步优先继续拆 `KmsManager` 的任务切换分支。
