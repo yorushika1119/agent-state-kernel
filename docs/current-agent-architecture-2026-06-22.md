@@ -754,3 +754,20 @@ src/kms/pipeline_stages/
 | `pipeline_stages/event_log.py` | 为事件分配 `event_id`、`state_version`、`runtime_session_id` 和 `intent_version` |
 
 `pipeline.py` 仍保留 `_assign_event_metadata` 导出，避免破坏当前 `KernelEngine` 调用。
+
+## 35. 2026-06-23 Summarize Stage 拆分
+
+KMS 9 阶段 pipeline 的 Summarize 阶段已经移动到：
+
+```text
+src/kms/pipeline_stages/
+  summarize.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `pipeline_stages/summarize.py` | 刷新 `progress_states`，并在可用时生成面向 Talker 的自然语言摘要 |
+
+`pipeline.py` 仍保留 `refresh_progress` 和 `summarize` 导出，避免破坏 `KernelEngine`、API server 和测试。

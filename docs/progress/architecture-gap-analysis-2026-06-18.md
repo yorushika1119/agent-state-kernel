@@ -2100,6 +2100,46 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 79 passed
 ```
 
+## 2026-06-23：KMS Summarize stage 拆分
+
+本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/pipeline_stages/summarize.py`。
+- 为什么改：Summarize 是独立阶段，负责刷新进度和生成 Talker 可读摘要。
+- 改完什么样：`pipeline.py` 继续对外提供 `refresh_progress/summarize`，实际实现放在单独 stage 文件里。
+
+移动结果：
+
+| 原内容 | 新位置 |
+|---|---|
+| `refresh_progress` 实现 | `src/kms/pipeline_stages/summarize.py` |
+| `summarize` 实现 | `src/kms/pipeline_stages/summarize.py` |
+
+兼容说明：
+
+- `src.kms.pipeline.refresh_progress` 和 `src.kms.pipeline.summarize` 仍可导入。
+- `pipeline.DEEPSEEK_API_KEY` monkeypatch 行为保持：`pipeline.summarize` 会把当前模块变量传入 stage。
+
+架构边界审查：
+
+- 仍是 KMS pipeline 的 Summarize 阶段。
+- Kernel 只读取 progress view，不负责自然语言摘要策略。
+- Talker 只消费摘要，不直接写状态。
+
+验证结果：
+
+```text
+python -m py_compile src\kms\pipeline.py src\kms\pipeline_stages\summarize.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider -q tests\test_pipeline_event_flow.py tests\test_missing_coverage.py tests\test_manager_observer_views.py tests\test_smoke_interrupt.py
+37 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
+
 ## 2026-06-23：KMS EventLog metadata 拆分
 
 本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。

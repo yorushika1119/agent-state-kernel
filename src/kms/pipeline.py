@@ -31,7 +31,6 @@ from src.kernel.state_reducer import (
     reduce_execution,
     reduce_intent,
     reduce_plan,
-    synthesize_progress,
 )
 from src.kms.decisioning.model import DEEPSEEK_API_KEY
 from src.kms.pipeline_stages.arbitrate import (
@@ -44,6 +43,10 @@ from src.kms.pipeline_stages.arbitrate import (
 from src.kms.pipeline_stages.classify import ClassifyResult, classify
 from src.kms.pipeline_stages.event_log import assign_event_metadata as _assign_event_metadata
 from src.kms.pipeline_stages.normalize import NormalizeResult, normalize
+from src.kms.pipeline_stages.summarize import (
+    refresh_progress as _refresh_progress,
+    summarize as _summarize,
+)
 from src.kms.pipeline_stages.validate import ValidateResult, validate
 from src.kms.runtime.execution_payload import merge_execution_payload
 from src.kms.runtime.references import register_runtime_references
@@ -245,49 +248,11 @@ async def reduce(
 # ===========================================================================
 
 async def refresh_progress(store, session_id: str) -> ProgressState:
-    """同步刷新 progress_states，供 Gate/Sync/Thinker 直接读取。"""
-    plan = plan_from_task_flow(await store.get_task_flow(session_id))
-    beliefs = beliefs_from_claims(await store.get_claim_items(session_id))
-    intent = intent_from_task_brief(await store.get_task_brief(session_id))
-    constraints = intent.constraints if intent else []
-    progress = synthesize_progress(session_id, plan, beliefs, constraints)
-    await store.save_progress(session_id, progress)
-    return progress
+    return await _refresh_progress(store, session_id)
 
 
 async def summarize(store, session_id: str) -> ProgressState:
-    """合成面向用户的进度视图（§5.12）。
-
-    progress_states 每次写事件后都会同步刷新；这里仅补充自然语言摘要。
-    """
-    progress = await refresh_progress(store, session_id)
-    safe_fact_count = len(progress.safe_facts)
-
-    # ── 尝试 DeepSeek 自然语言摘要 ──
-    # 只有当有信念且 API key 可用时才调用
-    if safe_fact_count and DEEPSEEK_API_KEY:
-        try:
-            from src.kms.decisioning.model import ModelCall
-            model = ModelCall()
-            safe_text = "\n".join(f"- {f}" for f in progress.safe_facts[:5])
-            prompt = (
-                f"Status: {progress.status}\n"
-                f"Stage: {progress.stage or 'ongoing'}\n"
-                f"Safe facts:\n{safe_text}\n\n"
-                f"Unresolved items count: {len(progress.unsafe_claims)}\n\n"
-                "Write ONE sentence in Chinese summarizing the current progress. "
-                "Only mention safe facts and high-level progress. "
-                "Do not quote or infer unresolved claims. "
-                "Only write the sentence, nothing else."
-            )
-            raw = await model.ask(system="", user=prompt, max_tokens=150)
-            if raw and isinstance(raw, str) and len(raw.strip()) > 5:
-                progress.summary = raw.strip()[:300]
-        except Exception as e:
-            logger.debug("Summarize DeepSeek call failed: %s", e)
-
-    await store.save_progress(session_id, progress)
-    return progress
+    return await _summarize(store, session_id, api_key=DEEPSEEK_API_KEY)
 
 
 # ===========================================================================
