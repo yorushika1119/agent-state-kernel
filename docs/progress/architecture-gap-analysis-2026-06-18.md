@@ -1627,139 +1627,40 @@ python scripts\test_core.py
 74 passed in 52.60s
 ```
 
-## 2026-06-22：旧状态表写入开关
+## 2026-06-22：旧状态表写入退场
 
-本阶段开始做旧表只读实验的第一步：新增开关，允许测试环境停止写旧状态表。
+本阶段把旧状态表从“兼容写入对象”收敛为“历史读取 fallback”。
 
-新增环境变量：
+代码变化：
 
-```text
-KMS_WRITE_LEGACY_STATE_TABLES=0
-```
+- `save_intent()` 只写 `task_brief_states`。
+- `save_plan()` 只写 `task_flows`。
+- `save_belief()` 只写 `claim_items`。
+- `save_commitment()` 只写 `todo_obligations`。
+- 不再保留旧表双写开关。
+- `get_intent / get_plan / get_beliefs / get_commitments` 继续保留旧表读取 fallback，用于历史 DB 兼容。
 
-行为：
+测试变化：
 
-- 默认不设置时仍然双写旧表，兼容现有数据和调用方。
-- 设置为 `0/false/no/off` 时：
-  - `save_intent()` 只写 `task_brief_states`，不写 `intent_states`；
-  - `save_plan()` 只写 `task_flows`，不写 `plan_states`；
-  - `save_belief()` 只写 `claim_items`，不写 `belief_items`；
-  - `save_commitment()` 只写 `todo_obligations`，不写 `commitments`。
+- 保留 `test_legacy_state_table_writes_are_disabled_by_default`，验证新保存的数据不会进入旧表。
+- 删除“恢复旧表双写”的测试，因为该能力已经退场。
+- 继续保留新表主读、`legacy_debug`、状态源审查相关回归。
 
-新增测试：
-
-```text
-tests/test_state_primary_read_switch.py::test_can_disable_legacy_state_table_writes
-```
-
-验证内容：
-
-- 关闭旧表写入后，新表仍正常写入；
-- 旧表不再产生新行；
-- `thinker_view` 仍能从新表输出 `task_brief/task_flow/claims/todos`。
-
-验证结果：
+本轮验证：
 
 ```text
 python -m py_compile src\stores\sqlite_store.py
 passed
 
-python -m pytest -o addopts='' -q tests\test_state_primary_read_switch.py tests\test_state_source_audit.py
-8 passed
-
-python scripts\test_core.py
-75 passed in 39.60s
-
-KMS_WRITE_LEGACY_STATE_TABLES=0 python scripts\test_core.py
-75 passed in 36.24s
-```
-
-当前结论：
-
-- 旧表还没有删除，也没有默认停止写入。
-- 但系统已经具备“停止写旧表”的测试开关。
-- core 层已经验证：关闭旧表写入后，核心链路仍能稳定运行。
-- 下一步可以在 integration 层继续用该开关扩大验证范围。
-
-### 旧表只读实验扩大到 integration
-
-本次在关闭旧表写入的情况下运行重集成测试层：
-
-```text
-KMS_WRITE_LEGACY_STATE_TABLES=0 python scripts\test_integration.py
-111 passed in 114.55s
-```
-
-覆盖范围包括：
-
-- pipeline event flow；
-- 打断 / 恢复；
-- requested user scenarios；
-- smoke interrupt；
-- architecture A/B experiment；
-- task directory router；
-- manager / observer views。
-
-结论：
-
-- 重集成链路也已经可以在“不写旧表”的情况下通过。
-- 旧表目前主要剩历史 fallback 和默认兼容双写职责。
-- 下一步可以考虑在测试策略里固定“旧表写入关闭”的 integration，或者开始评估把默认值从写旧表改为不写旧表。
-
-### 默认停止写旧状态表
-
-本阶段把旧状态表写入策略从“默认双写”改为“默认不写旧表”。
-
-当前行为：
-
-- 默认不写旧表；
-- 新状态继续写入：
-  - `task_brief_states`
-  - `task_flows`
-  - `claim_items`
-  - `todo_obligations`
-- 旧状态表仍保留读取 fallback；
-- 如需临时恢复旧表双写，可以设置：
-
-```text
-KMS_WRITE_LEGACY_STATE_TABLES=1
-```
-
-新增/调整测试：
-
-- `test_legacy_state_table_writes_are_disabled_by_default`
-- `test_can_opt_into_legacy_state_table_writes`
-
-按要求只运行 integration：
-
-```text
 python scripts\test_integration.py
-112 passed in 117.05s
-```
+111 passed in 200.09s
 
-结论：
-
-- 默认不写旧表后，重集成链路仍然通过。
-- 旧表现在主要承担历史数据 fallback，而不是新数据写入职责。
-- 下一步可以继续观察真实 smoke，之后再评估是否移除旧表双写代码本身。
-
-### 默认不写旧表的真实 smoke
-
-本次不设置任何 `KMS_WRITE_LEGACY_STATE_TABLES` 环境变量，直接使用当前默认策略运行真实链路。
-
-真实 Router smoke：
-
-```text
 python scripts\live_llm_router_smoke.py
 FINAL_DECISION=select_existing
 OTHER_STATUS_ACTION=respond_from_kernel
 OTHER_STATUS_REQUIRES_THINKER=False
 EXPLICIT_NEW_TASK_ACTION=start_new_task
-```
 
-真实 Hermes interrupt smoke：
-
-```text
 python scripts\live_interrupt_demo.py --real-model --scenario interrupt
 ARCHITECTURE_GLOSSARY_CHECK: passed
 old dispatch=failed
@@ -1767,8 +1668,21 @@ new dispatch=completed
 active_run=empty
 ```
 
-结论：
+验收范围：
 
-- 默认不写旧表后，真实 LLM Router 链路通过。
-- 默认不写旧表后，真实 Hermes Gateway/Thinker interrupt 链路通过。
-- 可以进入下一阶段：移除旧表写入代码本身，但继续保留旧表读取 fallback。
+- pipeline event flow；
+- 打断 / 恢复；
+- requested user scenarios；
+- smoke interrupt；
+- architecture A/B experiment；
+- task directory router；
+- manager / observer views；
+- 真实 LLM Router；
+- 真实 Hermes interrupt。
+
+当前结论：
+
+- 新数据已经只进入新版 task-first 状态表。
+- 旧表不再承担新写入职责。
+- 旧表仍不能物理删除，因为历史库读取 fallback 还在。
+- 下一步应继续观察旧表 fallback 的真实使用情况，再决定是否做物理删表迁移。

@@ -254,24 +254,6 @@ async def test_legacy_state_table_writes_are_disabled_by_default():
 
 
 @pytest.mark.asyncio
-async def test_can_opt_into_legacy_state_table_writes(monkeypatch):
-    monkeypatch.setenv("KMS_WRITE_LEGACY_STATE_TABLES", "1")
-    store, engine = await build_runtime()
-    try:
-        session = await engine.create_session(agent_id="agent-legacy-write-opt-in")
-        await store.save_intent(
-            session.kernel_session_id,
-            IntentState(intent_version=1, goal="legacy opt in"),
-        )
-
-        assert await count_rows(store, "task_brief_states", session.kernel_session_id) == 1
-        assert await count_rows(store, "intent_states", session.kernel_session_id) == 1
-    finally:
-        monkeypatch.delenv("KMS_WRITE_LEGACY_STATE_TABLES", raising=False)
-        await store.close()
-
-
-@pytest.mark.asyncio
 async def test_manager_view_risks_and_blocking_use_task_first_state():
     store, engine = await build_runtime()
     try:

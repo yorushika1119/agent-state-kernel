@@ -103,8 +103,8 @@ flowchart TD
 当前状态源结论：
 
 - `task_brief_states / task_flows / claim_items / todo_obligations` 已经切为主读模型。
-- `save_intent / save_plan / save_belief / save_commitment` 默认只写新版表。
-- `KMS_WRITE_LEGACY_STATE_TABLES=1` 可临时恢复旧表双写，用于兼容排查。
+- `save_intent / save_plan / save_belief / save_commitment` 只写新版表。
+- 旧表写入代码已经移除，不再支持恢复旧表双写。
 - `intent_states / plan_states / belief_items / commitments` 暂不删除，只用于历史数据 fallback。
 - `legacy_debug` 只保留在 `manager_view` 和 `debug_view`，不再暴露给 `thinker_view`。
 - `GET /kms/state-source-audit` 可查看当前主读切换状态。
@@ -262,8 +262,8 @@ ack / resolve
 | observer/talker notification API | 已完成第一版 |
 | NotificationCoordinator | 已完成第一版 |
 | task conversation refs | 已完成第一版 |
-| 新状态表主读和默认写入 | 已完成 |
-| 默认不写旧状态表 | 已完成，integration 和真实 smoke 通过 |
+| 新状态表主读和写入 | 已完成 |
+| 旧状态表写入退场 | 已完成，integration 和真实 smoke 通过 |
 | 测试分层 fast / core / integration / full | 已完成 |
 | 真实 Router smoke | 已通过 |
 | 真实 Hermes interrupt smoke | 已通过 |
@@ -283,9 +283,9 @@ ack / resolve
 | Notification policy 去重 / 节流 / 优先级 | 已完成第一版 |
 | StateSourceAudit 主从切换审查 | 已完成第一版 |
 | legacy_debug 收窄到 manager/debug | 已完成 |
-| 默认不写旧状态表 | 已完成 |
+| 旧状态表写入退场 | 已完成 |
 | 测试分层 | 已完成 |
-| 默认不写旧表下的 integration / real smoke | 已通过 |
+| 移除旧表写入后的 integration / real smoke | 已通过 |
 
 这些仍然是渐进式实现，不代表 Runtime 生态已经全部接完。
 
@@ -297,7 +297,6 @@ ack / resolve
 | Runtime Event Adapter 深度接入 Hermes | 通用 Adapter 已有，真实 Hermes 侧还可继续接入更多 runtime refs |
 | Observer notification WebSocket | SSE 第一版已完成，WebSocket 未做 |
 | Notification 高级优先级策略 | 第一版策略表已完成，复杂升级策略未做 |
-| 旧表写入代码 | 默认已不写旧表，但 opt-in 双写代码仍保留 |
 | 旧表读取 fallback | 仍保留，用于历史 DB 兼容 |
 | 旧表物理删除 | 未做，需要最后评估 |
 
@@ -314,8 +313,8 @@ ack / resolve
 | Kernel 直接回答状态问题 | 80% | progress / evidence / failures / claims / todos 已支持 |
 | User Session 多任务管理 | 80% | user_sessions / global_tasks / conversation refs 已有 |
 | Observer / Manager / Notification | 65% | API / SSE / policy 第一版可用 |
-| 新状态表迁移 | 85% | 新表主读、默认写入、默认不写旧表 |
-| 旧表退场 | 70% | 写入默认停止，fallback 和物理删除未完成 |
+| 新状态表迁移 | 90% | 新表主读、写入代码已切到新表 |
+| 旧表退场 | 80% | 写入代码已移除，fallback 和物理删除未完成 |
 | 测试体系 | 80% | fast / core / integration / full 已分层 |
 
 当前没有发现完成不了的硬阻塞。剩余主要是收尾、加固和产品化。

@@ -22,7 +22,6 @@
 |---|---|---|
 | core 默认不写旧表 | `python scripts/test_core.py` | 验证核心链路只写新表 |
 | integration 默认不写旧表 | `python scripts/test_integration.py` | 验证 pipeline/打断/恢复重链路只写新表 |
-| 临时恢复旧表双写 | `KMS_WRITE_LEGACY_STATE_TABLES=1 python scripts/test_core.py` | 兼容排查时使用 |
 
 建议节奏：
 
@@ -44,13 +43,7 @@ python scripts/test_core.py
 74 passed in 52.60s
 
 python scripts/test_integration.py
-待重新测量
-
-KMS_WRITE_LEGACY_STATE_TABLES=0 python scripts/test_integration.py
-111 passed in 114.55s
-
-python scripts/test_integration.py
-112 passed in 117.05s
+111 passed in 200.09s
 
 python scripts/test_full.py
 117 passed in 154.26s

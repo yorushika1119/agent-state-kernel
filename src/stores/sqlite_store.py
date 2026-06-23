@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -75,8 +74,6 @@ from src.utils.time import utc_from_iso, utc_now, utc_now_iso
 
 logger = logging.getLogger(__name__)
 
-LEGACY_WRITE_DISABLED_VALUES = {"0", "false", "no", "off"}
-
 
 class SqliteStore:
     """基于 SQLite 的 Kernel 状态存储。
@@ -88,10 +85,6 @@ class SqliteStore:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.conn: Optional[aiosqlite.Connection] = None
-
-    def _write_legacy_state_tables(self) -> bool:
-        value = os.getenv("KMS_WRITE_LEGACY_STATE_TABLES", "0")
-        return value.strip().lower() not in LEGACY_WRITE_DISABLED_VALUES
 
     # ==================================================================
     # 连接管理
@@ -1032,26 +1025,6 @@ class SqliteStore:
                 cancelled=intent.cancelled,
             )
         )
-        if not self._write_legacy_state_tables():
-            return
-        await self.conn.execute(
-            """INSERT OR REPLACE INTO intent_states
-               (kernel_session_id, intent_version, goal, constraints,
-                output_format, priority, cancelled, last_user_update_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                session_id,
-                intent.intent_version,
-                intent.goal,
-                json.dumps(intent.constraints, ensure_ascii=False),
-                intent.output_format,
-                intent.priority,
-                int(intent.cancelled),
-                intent.last_user_update_at.isoformat() if intent.last_user_update_at else None,
-                utc_now_iso(),
-            ),
-        )
-        await self.conn.commit()  # ← 必须 commit！常见遗漏坑
 
     # ── 计划 ──
     async def get_plan(self, session_id: str) -> Optional[PlanState]:
@@ -1105,24 +1078,6 @@ class SqliteStore:
                 execution_summary=await self._build_execution_summary(session_id),
             )
         )
-        if not self._write_legacy_state_tables():
-            return
-        await self.conn.execute(
-            """INSERT OR REPLACE INTO plan_states
-               (kernel_session_id, plan_id, status, current_step, steps,
-                intent_version, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                session_id,
-                plan.plan_id,
-                plan.status.value,
-                plan.current_step,
-                json.dumps([s.model_dump() for s in plan.steps], ensure_ascii=False),
-                plan.intent_version,
-                utc_now_iso(),
-            ),
-        )
-        await self.conn.commit()
 
     # ── 新版状态兼容层 ──
     async def get_task_brief(self, session_id: str) -> Optional[TaskBriefState]:
@@ -2011,28 +1966,6 @@ class SqliteStore:
                 last_verified_at=belief.last_verified_at,
             )
         )
-        if not self._write_legacy_state_tables():
-            return
-        await self.conn.execute(
-            """INSERT OR REPLACE INTO belief_items
-               (belief_id, kernel_session_id, claim, status, confidence,
-                supporting_evidence, conflicting_evidence, visibility,
-                last_verified_at, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                belief.belief_id,
-                session_id,
-                belief.claim,
-                belief.status.value,
-                belief.confidence,
-                json.dumps(belief.supporting_evidence, ensure_ascii=False),
-                json.dumps(belief.conflicting_evidence, ensure_ascii=False),
-                belief.visibility,
-                belief.last_verified_at.isoformat() if belief.last_verified_at else None,
-                utc_now_iso(),
-            ),
-        )
-        await self.conn.commit()
 
     async def save_claim_item(self, claim: ClaimItem) -> None:
         await self.conn.execute(
@@ -2207,27 +2140,6 @@ class SqliteStore:
                 resolved_at=commitment.resolved_at,
             )
         )
-        if not self._write_legacy_state_tables():
-            return
-        await self.conn.execute(
-            """INSERT OR REPLACE INTO commitments
-               (commitment_id, kernel_session_id, statement, created_by,
-                status, requires_confirmation, related_intent_version,
-                resolved_at, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                commitment.commitment_id,
-                session_id,
-                commitment.statement,
-                commitment.created_by,
-                commitment.status.value,
-                int(commitment.requires_confirmation),
-                commitment.related_intent_version,
-                commitment.resolved_at.isoformat() if commitment.resolved_at else None,
-                utc_now_iso(),
-            ),
-        )
-        await self.conn.commit()
 
     async def save_todo_obligation(self, obligation: TodoObligation) -> None:
         await self.conn.execute(
