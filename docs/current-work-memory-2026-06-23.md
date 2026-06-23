@@ -67,58 +67,54 @@ Talker / Hermes
 | KmsManager task dispatch planner 小拆分 | 已完成第一版 |
 | Runtime Event Adapter Hermes 工具事件入口 | 已完成第一版 |
 | 真实 Hermes kernel dispatch 工具事件 helper | 已完成第一版 |
-| 旧表物理删除 removal-check | 已完成第一版 |
+| 旧表物理删除 removal-check / drop 工具 | 已完成第一版，真实库未执行 drop |
+| KMS pipeline stage 拆分 | 已完成第一轮，Normalize/Validate/Classify/Arbitrate/EventLog/Reduce/Summarize/Gate/Sync 已拆出 |
 
 ## 4. 最近完成的阶段
 
-最近完成的是“旧状态表写入退场”。
+最近完成的是“KMS pipeline stage 拆分”和“旧状态表物理删除准备”。
 
 代码变化：
 
-- 删除旧写入开关 `KMS_WRITE_LEGACY_STATE_TABLES`。
-- 删除旧表写入逻辑。
-- `save_intent()` 只写 `task_brief_states`。
-- `save_plan()` 只写 `task_flows`。
-- `save_belief()` 只写 `claim_items`。
-- `save_commitment()` 只写 `todo_obligations`。
-- 保留 `get_intent / get_plan / get_beliefs / get_commitments` 的旧表读取 fallback。
+- `src/kms/pipeline.py` 保留总编排，阶段细节移到 `src/kms/pipeline_stages/`。
+- `Reduce / Summarize / Gate / Sync` 已从大 pipeline 文件中拆出。
+- `SqliteStore` 新增 `create_legacy_state_tables=False`，支持新表-only 模式。
+- `scripts/migrate_legacy_state_tables.py` 新增 `--drop-legacy-tables`。
+- 默认仍保留 `get_intent / get_plan / get_beliefs / get_commitments` 的旧表读取 fallback。
 
 测试变化：
 
-- 删除“恢复旧表双写”的测试。
-- 保留“新保存的数据不会进入旧表”的回归。
+- 新增新表-only Store 回归。
+- 新增 legacy drop 临时库回归。
 - 保留新表主读、`legacy_debug`、状态源审查相关回归。
 
 Git：
 
 ```text
-commit: 2c31253 Remove legacy state table writes
-push: 成功
+latest local commits:
+92e07da Split KMS gate pipeline stage
+9a686bc Split KMS sync pipeline stage
+72ab438 Split KMS reduce pipeline stage
+push: 暂未执行
 ```
 
 ## 5. 最近验证结果
 
 ```text
-python -m py_compile src\stores\sqlite_store.py
+python -m py_compile src\stores\sqlite_store.py scripts\migrate_legacy_state_tables.py
 passed
 
-python scripts\test_integration.py
-111 passed in 200.09s
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-legacy-drop -p no:cacheprovider -q tests\test_state_primary_read_switch.py tests\test_legacy_state_migration.py tests\test_state_source_audit.py tests\test_legacy_fallback_audit_report.py
+14 passed
 
-python scripts\live_llm_router_smoke.py
-passed
-
-python scripts\live_interrupt_demo.py --real-model --scenario interrupt
-old dispatch=failed
-new dispatch=completed
-active_run=empty
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-legacy-drop-core -p no:cacheprovider
+80 passed
 ```
 
 说明：
 
-- integration 变为 111 条，是因为删除了“恢复旧表双写”的测试。
-- 真实 LLM Router smoke 证明模糊任务路由仍可工作。
-- 真实 Hermes interrupt smoke 证明旧 run 被打断后不会污染新回复。
+- core 变为 80 条，是因为新增了新表-only Store 回归。
+- 真实库没有执行 `--drop-legacy-tables`。
 
 ## 6. 当前完成度判断
 
@@ -132,7 +128,7 @@ active_run=empty
 | User Session 多任务管理 | 80% | user_sessions / global_tasks / conversation refs 已有 |
 | Observer / Manager / Notification | 65% | API / SSE / policy 第一版可用 |
 | 新状态表迁移 | 90% | 新表主读，写入代码已切到新表 |
-| 旧表退场 | 86% | 写入代码已移除，读取 fallback 已审计且有查看脚本，removal-check 已有，物理删表未做 |
+| 旧表退场 | 88% | 写入代码已移除，读取 fallback 已审计，removal-check/drop 工具有了，真实库物理删表未执行 |
 | 测试体系 | 80% | fast / core / integration / full 已分层 |
 
 当前没有发现完成不了的硬阻塞。剩下主要是收尾、加固和产品化。
@@ -141,12 +137,12 @@ active_run=empty
 
 | 下一步 | 原因 |
 |---|---|
-| 继续观察旧表 fallback 审计数据 | 决定后续能不能物理删除旧表 |
+| 新表-only 模式跑 integration / smoke | 验证真实链路不依赖 legacy 表 |
 | 继续拆 `KmsManager` 主流程 | dispatch decision 和 task dispatch planner 已拆出，但主流程仍可继续分段 |
 | Runtime Event Adapter 深度接 Hermes | 工具/summary/raw result 方法已有，真实 Hermes 共享 helper 已补，gateway 主流程还可继续逐步接入 |
 | Observer notification WebSocket | SSE 第一版有了，WebSocket 未做 |
 | Notification 高级策略 | 当前只是第一版，复杂升级/优先级还可增强 |
-| 旧表物理删除 | 最后阶段再做，需要确认历史数据迁移和 fallback 使用情况 |
+| 旧表物理删除 | 工具有了，最后阶段再对真实库执行 |
 
 ## 8. 测试策略
 
@@ -200,10 +196,11 @@ legacy_state_fallback_audits
 - `RuntimeEventAdapter` 已支持 Hermes 常见工具事件和 summary/raw result 事件提交。
 - 真实 Hermes 的 `hermes_cli/kernel_dispatch.py` 已补工具事件 helper。
 - `scripts/migrate_legacy_state_tables.py --removal-check` 已可检查删表前置条件。
+- `scripts/migrate_legacy_state_tables.py --drop-legacy-tables` 已可在安全时删除 legacy 状态表。
 
 建议下一步：
 
-- 暂时不要物理删除旧表。
+- 暂时不要直接删除真实库旧表。
 - 继续保留 fallback 审计。
-- 累积更多真实运行数据后，再做旧表物理删除方案。
+- 先用新表-only 模式跑 integration / smoke，再考虑真实库物理删除。
 - 下一步优先继续拆 `KmsManager` 主流程，或开始让真实 Gateway 工具回调逐步调用新的 kernel dispatch helper。

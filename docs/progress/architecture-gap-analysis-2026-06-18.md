@@ -2139,6 +2139,43 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-reduce-cor
 79 passed
 ```
 
+## 2026-06-23：legacy 状态表可选创建与 drop 工具
+
+本阶段继续推进旧状态表退场，但不直接删除真实库。
+
+通俗说明：
+
+- 改哪里：`SqliteStore` 新增 `create_legacy_state_tables` 参数，`scripts/migrate_legacy_state_tables.py` 新增 `--drop-legacy-tables`。
+- 为什么改：如果 Store 每次启动都会自动创建旧表，旧表就无法真正物理退场。
+- 改完什么样：默认仍兼容旧表；显式关闭时可以运行完全没有旧状态表的新表-only 数据库。
+
+关键行为：
+
+| 行为 | 当前结果 |
+|---|---|
+| 默认 Store | 仍创建旧表，保证历史兼容 |
+| `create_legacy_state_tables=False` | 不创建 `intent_states/plan_states/belief_items/commitments` |
+| 旧 getter fallback | 关闭旧表时不查 legacy 表 |
+| `--drop-legacy-tables` | 先跑 removal-check，安全才 drop |
+
+架构边界审查：
+
+- 新版状态表仍是主路径。
+- 旧表只作为历史兼容 fallback。
+- 真实库没有执行 drop，避免误删历史数据。
+
+验证结果：
+
+```text
+python -m py_compile src\stores\sqlite_store.py scripts\migrate_legacy_state_tables.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-legacy-drop -p no:cacheprovider -q tests\test_state_primary_read_switch.py tests\test_legacy_state_migration.py tests\test_state_source_audit.py tests\test_legacy_fallback_audit_report.py
+14 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-legacy-drop-core -p no:cacheprovider
+80 passed
+```
+
 ## 2026-06-23：KMS Sync stage 拆分
 
 本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。

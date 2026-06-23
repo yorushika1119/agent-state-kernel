@@ -306,7 +306,7 @@ ack / resolve
 | Observer notification WebSocket | SSE 第一版已完成，WebSocket 未做 |
 | Notification 高级优先级策略 | 第一版策略表已完成，复杂升级策略未做 |
 | 旧表读取 fallback | 仍保留，用于历史 DB 兼容；已有命中审计 |
-| 旧表物理删除 | 未做，需要最后评估 |
+| 旧表物理删除 | 工具链已具备，真实库未执行；需要最后评估 |
 
 ## 14. 当前完成度与剩余风险
 
@@ -322,7 +322,7 @@ ack / resolve
 | User Session 多任务管理 | 80% | user_sessions / global_tasks / conversation refs 已有 |
 | Observer / Manager / Notification | 65% | API / SSE / policy 第一版可用 |
 | 新状态表迁移 | 90% | 新表主读、写入代码已切到新表 |
-| 旧表退场 | 86% | 写入代码已移除，fallback 已审计且有查看脚本，removal-check 已有，物理删除未完成 |
+| 旧表退场 | 88% | 写入代码已移除，fallback 已审计，removal-check 和 drop 工具已有，真实库物理删除未执行 |
 | 测试体系 | 80% | fast / core / integration / full 已分层 |
 
 当前没有发现完成不了的硬阻塞。剩余主要是收尾、加固和产品化。
@@ -337,7 +337,7 @@ ack / resolve
 
 暂时不建议：
 
-- 删除旧 `intent/plan/belief/commitment` 表；
+- 直接删除真实库里的旧 `intent/plan/belief/commitment` 表；
 - 把完整 message history 存进 Kernel；
 - 让 Kernel 接管 Hermes 的 runtime session DB；
 - 让 Observer 绕过 `observer_view` 直接读 debug/raw state；
@@ -828,3 +828,32 @@ src/kms/pipeline_stages/
 `pipeline.py` 仍保留 `reduce` 导出，避免破坏 `KernelEngine`、API server 和测试中的旧导入。
 
 架构边界不变：KMS 负责触发 Reduce；Kernel/Store 负责保存状态；Thinker 和 Talker 仍不能直接写状态。
+
+## 39. 2026-06-23 Legacy State Tables 可选创建
+
+`SqliteStore` 已支持新表-only 模式：
+
+```python
+SqliteStore(":memory:", create_legacy_state_tables=False)
+```
+
+默认行为不变，仍创建旧状态表，保证历史库兼容。
+
+显式关闭时，不再创建：
+
+| legacy 表 | 新表 |
+|---|---|
+| `intent_states` | `task_brief_states` |
+| `plan_states` | `task_flows` |
+| `belief_items` | `claim_items` |
+| `commitments` | `todo_obligations` |
+
+`scripts/migrate_legacy_state_tables.py` 已新增：
+
+```text
+--drop-legacy-tables
+```
+
+它会先执行 removal-check，只有安全时才 drop legacy 状态表。
+
+当前没有对真实 `data/kernel.db` 执行 drop。这个能力只是让后续物理删表有可测试路径。

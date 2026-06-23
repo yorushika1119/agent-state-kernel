@@ -1,15 +1,15 @@
 """SQLite 持久化层 — Agent State Kernel 的存储引擎。
 
-管理 22 张表：
+管理 18 张主表 + 4 张 legacy fallback 表：
   1. cognitive_events     — 追加事件日志
   2. evidence_items        — 证据条目
-  3. belief_items          — 信念条目
+  3. belief_items          — legacy 信念条目
   4. execution_actions     — 执行动作
-  5. intent_states         — 意图状态
-  6. plan_states           — 计划状态
+  5. intent_states         — legacy 意图状态
+  6. plan_states           — legacy 计划状态
   7. task_snapshots        — task/goal 快照
   8. progress_states       — 进度合成
-  9. commitments           — Talker 承诺
+  9. commitments           — legacy Talker 承诺
   10. sync_cursors         — 外部同步游标（Multica）
   11. runtime_refs         — Runtime 引用索引
   12. session_links        — 会话映射
@@ -82,9 +82,10 @@ class SqliteStore:
     进行——绝不要在外部直接操作数据库。
     """
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, *, create_legacy_state_tables: bool = True):
         self.db_path = db_path
         self.conn: Optional[aiosqlite.Connection] = None
+        self.create_legacy_state_tables = create_legacy_state_tables
 
     # ==================================================================
     # 连接管理
@@ -144,22 +145,23 @@ class SqliteStore:
             )
         """)
 
-        # ── 3. 信念条目 ──
-        await self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS belief_items (
-                belief_id TEXT NOT NULL,
-                kernel_session_id TEXT NOT NULL,
-                claim TEXT,
-                status TEXT DEFAULT 'unverified',
-                confidence REAL DEFAULT 0.0,
-                supporting_evidence TEXT,
-                conflicting_evidence TEXT,
-                visibility TEXT DEFAULT 'shared',
-                last_verified_at TEXT,
-                created_at TEXT,
-                PRIMARY KEY (kernel_session_id, belief_id)
-            )
-        """)
+        if self.create_legacy_state_tables:
+            # ── 3. legacy 信念条目 ──
+            await self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS belief_items (
+                    belief_id TEXT NOT NULL,
+                    kernel_session_id TEXT NOT NULL,
+                    claim TEXT,
+                    status TEXT DEFAULT 'unverified',
+                    confidence REAL DEFAULT 0.0,
+                    supporting_evidence TEXT,
+                    conflicting_evidence TEXT,
+                    visibility TEXT DEFAULT 'shared',
+                    last_verified_at TEXT,
+                    created_at TEXT,
+                    PRIMARY KEY (kernel_session_id, belief_id)
+                )
+            """)
 
         # ── 4. 执行动作 ──
         await self.conn.execute("""
@@ -180,33 +182,34 @@ class SqliteStore:
             )
         """)
 
-        # ── 5. 意图状态 ──
-        await self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS intent_states (
-                kernel_session_id TEXT PRIMARY KEY,
-                intent_version INTEGER DEFAULT 0,
-                goal TEXT,
-                constraints TEXT,
-                output_format TEXT,
-                priority TEXT DEFAULT 'normal',
-                cancelled INTEGER DEFAULT 0,
-                last_user_update_at TEXT,
-                updated_at TEXT
-            )
-        """)
+        if self.create_legacy_state_tables:
+            # ── 5. legacy 意图状态 ──
+            await self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS intent_states (
+                    kernel_session_id TEXT PRIMARY KEY,
+                    intent_version INTEGER DEFAULT 0,
+                    goal TEXT,
+                    constraints TEXT,
+                    output_format TEXT,
+                    priority TEXT DEFAULT 'normal',
+                    cancelled INTEGER DEFAULT 0,
+                    last_user_update_at TEXT,
+                    updated_at TEXT
+                )
+            """)
 
-        # ── 6. 计划状态 ──
-        await self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS plan_states (
-                kernel_session_id TEXT PRIMARY KEY,
-                plan_id TEXT,
-                status TEXT DEFAULT 'active',
-                current_step TEXT,
-                steps TEXT,
-                intent_version INTEGER DEFAULT 0,
-                updated_at TEXT
-            )
-        """)
+            # ── 6. legacy 计划状态 ──
+            await self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS plan_states (
+                    kernel_session_id TEXT PRIMARY KEY,
+                    plan_id TEXT,
+                    status TEXT DEFAULT 'active',
+                    current_step TEXT,
+                    steps TEXT,
+                    intent_version INTEGER DEFAULT 0,
+                    updated_at TEXT
+                )
+            """)
 
         # ── 7. task 快照 ──
         await self.conn.execute("""
@@ -246,21 +249,22 @@ class SqliteStore:
             )
         """)
 
-        # ── 9. 承诺 ──
-        await self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS commitments (
-                commitment_id TEXT NOT NULL,
-                kernel_session_id TEXT NOT NULL,
-                statement TEXT,
-                created_by TEXT DEFAULT 'talker',
-                status TEXT DEFAULT 'pending',
-                requires_confirmation INTEGER DEFAULT 0,
-                related_intent_version INTEGER DEFAULT 0,
-                resolved_at TEXT,
-                created_at TEXT,
-                PRIMARY KEY (kernel_session_id, commitment_id)
-            )
-        """)
+        if self.create_legacy_state_tables:
+            # ── 9. legacy 承诺 ──
+            await self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS commitments (
+                    commitment_id TEXT NOT NULL,
+                    kernel_session_id TEXT NOT NULL,
+                    statement TEXT,
+                    created_by TEXT DEFAULT 'talker',
+                    status TEXT DEFAULT 'pending',
+                    requires_confirmation INTEGER DEFAULT 0,
+                    related_intent_version INTEGER DEFAULT 0,
+                    resolved_at TEXT,
+                    created_at TEXT,
+                    PRIMARY KEY (kernel_session_id, commitment_id)
+                )
+            """)
 
         # ── 10. 同步游标 ──
         await self.conn.execute("""
@@ -839,15 +843,22 @@ class SqliteStore:
         if not session:
             return False
         tables = [
-            "progress_states", "plan_states", "intent_states",
+            "progress_states",
             "task_snapshots", "global_tasks", "task_brief_states",
             "task_flows", "claim_items", "todo_obligations",
             "thinker_dispatches", "observer_notifications",
             "task_conversation_refs",
-            "belief_items", "evidence_items", "execution_actions",
-            "commitments", "sync_cursors", "runtime_refs",
+            "evidence_items", "execution_actions",
+            "sync_cursors", "runtime_refs",
             "cognitive_events", "session_links",
         ]
+        if self.create_legacy_state_tables:
+            tables.extend([
+                "plan_states",
+                "intent_states",
+                "belief_items",
+                "commitments",
+            ])
         for table in tables:
             await self.conn.execute(
                 f"DELETE FROM {table} WHERE kernel_session_id = ?", (session_id,)
@@ -859,21 +870,24 @@ class SqliteStore:
         """清空可由 event log 重建的派生状态。"""
         tables = [
             "progress_states",
-            "plan_states",
-            "intent_states",
             "task_snapshots",
             "global_tasks",
             "task_brief_states",
             "task_flows",
             "claim_items",
             "todo_obligations",
-            "belief_items",
             "evidence_items",
             "execution_actions",
-            "commitments",
             "sync_cursors",
             "runtime_refs",
         ]
+        if self.create_legacy_state_tables:
+            tables.extend([
+                "plan_states",
+                "intent_states",
+                "belief_items",
+                "commitments",
+            ])
         for table in tables:
             await self.conn.execute(
                 f"DELETE FROM {table} WHERE kernel_session_id = ?", (session_id,)
@@ -1034,6 +1048,8 @@ class SqliteStore:
                 cancelled=bool(r["cancelled"]),
                 last_user_update_at=utc_from_iso(r["updated_at"]),
             )
+        if not self.create_legacy_state_tables:
+            return None
         row = await self.conn.execute_fetchall(
             "SELECT * FROM intent_states WHERE kernel_session_id = ?",
             (session_id,),
@@ -1091,6 +1107,8 @@ class SqliteStore:
                 current_step=r["current_step"] or "",
                 intent_version=r["task_brief_version"] or 0,
             )
+        if not self.create_legacy_state_tables:
+            return None
         row = await self.conn.execute_fetchall(
             "SELECT * FROM plan_states WHERE kernel_session_id = ?",
             (session_id,),
@@ -1980,6 +1998,8 @@ class SqliteStore:
                 )
                 for r in claim_rows
             ]
+        if not self.create_legacy_state_tables:
+            return []
         rows = await self.conn.execute_fetchall(
             "SELECT * FROM belief_items WHERE kernel_session_id = ?",
             (session_id,),
@@ -2161,6 +2181,8 @@ class SqliteStore:
                 )
                 for r in todo_rows
             ]
+        if not self.create_legacy_state_tables:
+            return []
         rows = await self.conn.execute_fetchall(
             "SELECT * FROM commitments WHERE kernel_session_id = ?",
             (session_id,),

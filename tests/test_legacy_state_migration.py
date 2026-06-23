@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.migrate_legacy_state_tables import (
     check_legacy_state_table_removal,
+    drop_legacy_state_tables,
     migrate_legacy_state_tables,
 )
 from src.kernel.engine import KernelEngine
@@ -22,6 +23,14 @@ async def _count_rows(store: SqliteStore, table: str, session_id: str) -> int:
         (session_id,),
     )
     return rows[0]["count"]
+
+
+async def _table_exists(store: SqliteStore, table: str) -> bool:
+    rows = await store.conn.execute_fetchall(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    )
+    return bool(rows)
 
 
 @pytest.mark.asyncio
@@ -178,3 +187,20 @@ async def test_check_legacy_state_table_removal_reports_blockers(tmp_path):
     assert ready["legacy_rows"] == 1
     assert ready["unmigrated_sessions"] == 0
     assert ready["fallback_hit_count"] == 0
+
+    dropped = await drop_legacy_state_tables(str(db_path))
+    assert dropped["dropped"] is True
+    assert dropped["dropped_tables"] == [
+        "intent_states",
+        "plan_states",
+        "belief_items",
+        "commitments",
+    ]
+
+    store = SqliteStore(str(db_path), create_legacy_state_tables=False)
+    await store.connect()
+    try:
+        for table in ("intent_states", "plan_states", "belief_items", "commitments"):
+            assert not await _table_exists(store, table)
+    finally:
+        await store.close()

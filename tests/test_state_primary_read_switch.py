@@ -42,6 +42,71 @@ async def count_rows(store: SqliteStore, table: str, session_id: str) -> int:
     return rows[0]["count"]
 
 
+async def table_exists(store: SqliteStore, table: str) -> bool:
+    rows = await store.conn.execute_fetchall(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    )
+    return bool(rows)
+
+
+@pytest.mark.asyncio
+async def test_store_can_run_without_legacy_state_tables():
+    store = SqliteStore(":memory:", create_legacy_state_tables=False)
+    await store.connect()
+    engine = KernelEngine(store)
+    try:
+        for table in ("intent_states", "plan_states", "belief_items", "commitments"):
+            assert not await table_exists(store, table)
+
+        session = await engine.create_session(agent_id="agent-new-only")
+        sid = session.kernel_session_id
+
+        await store.save_intent(sid, IntentState(intent_version=1, goal="new only"))
+        await store.save_plan(
+            sid,
+            PlanState(
+                plan_id="plan_new_only",
+                status=PlanStatus.ACTIVE,
+                current_step="step_1",
+                steps=[
+                    PlanStep(
+                        step_id="step_1",
+                        name="new step",
+                        status=StepStatus.RUNNING,
+                    )
+                ],
+                intent_version=1,
+            ),
+        )
+        await store.save_belief(
+            sid,
+            BeliefItem(
+                belief_id="claim_new_only",
+                claim="new only claim",
+                status=BeliefStatus.VERIFIED,
+                confidence=0.9,
+            ),
+        )
+        await store.save_commitment(
+            sid,
+            Commitment(
+                commitment_id="todo_new_only",
+                statement="new only todo",
+                status=CommitmentStatus.PENDING,
+            ),
+        )
+
+        assert (await store.get_intent(sid)).goal == "new only"
+        assert (await store.get_plan(sid)).current_step == "step_1"
+        assert (await store.get_beliefs(sid))[0].claim == "new only claim"
+        assert (await store.get_commitments(sid))[0].statement == "new only todo"
+        assert await store.get_legacy_state_fallback_audit() == []
+        assert await store.delete_session(sid) is True
+    finally:
+        await store.close()
+
+
 @pytest.mark.asyncio
 async def test_legacy_getters_prefer_task_first_state_when_both_exist():
     store, engine = await build_runtime()

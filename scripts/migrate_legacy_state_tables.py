@@ -45,7 +45,17 @@ async def _has_row(store: SqliteStore, table: str, session_id: str) -> bool:
     return bool(rows)
 
 
+async def _table_exists(store: SqliteStore, table: str) -> bool:
+    rows = await store.conn.execute_fetchall(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    )
+    return bool(rows)
+
+
 async def _legacy_rows(store: SqliteStore, table: str, session_id: str) -> list:
+    if not await _table_exists(store, table):
+        return []
     rows = await store.conn.execute_fetchall(
         f"SELECT * FROM {table} WHERE kernel_session_id = ?",
         (session_id,),
@@ -160,7 +170,7 @@ async def check_legacy_state_table_removal(
     *,
     limit: int = 10000,
 ) -> dict[str, object]:
-    store = SqliteStore(db_path)
+    store = SqliteStore(db_path, create_legacy_state_tables=False)
     await store.connect()
     stats: dict[str, object] = {
         "sessions": 0,
@@ -211,6 +221,33 @@ async def check_legacy_state_table_removal(
         await store.close()
 
 
+async def drop_legacy_state_tables(
+    db_path: str,
+    *,
+    limit: int = 10000,
+) -> dict[str, object]:
+    stats = await check_legacy_state_table_removal(db_path, limit=limit)
+    stats["dropped"] = False
+    stats["dropped_tables"] = []
+    if not stats["safe_to_remove"]:
+        return stats
+
+    store = SqliteStore(db_path, create_legacy_state_tables=False)
+    await store.connect()
+    try:
+        dropped_tables: list[str] = []
+        for table in LEGACY_TO_NEW:
+            if await _table_exists(store, table):
+                await store.conn.execute(f"DROP TABLE IF EXISTS {table}")
+                dropped_tables.append(table)
+        await store.conn.commit()
+        stats["dropped"] = True
+        stats["dropped_tables"] = dropped_tables
+        return stats
+    finally:
+        await store.close()
+
+
 async def _main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("db_path", help="Path to the kernel SQLite database.")
@@ -218,10 +255,19 @@ async def _main() -> int:
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing new-table rows.")
     parser.add_argument("--limit", type=int, default=10000)
     parser.add_argument("--removal-check", action="store_true", help="Only check physical removal readiness.")
+    parser.add_argument("--drop-legacy-tables", action="store_true", help="Drop legacy state tables if removal-check is safe.")
     args = parser.parse_args()
 
     if args.removal_check:
         stats = await check_legacy_state_table_removal(
+            args.db_path,
+            limit=args.limit,
+        )
+        print(json.dumps(stats, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.drop_legacy_tables:
+        stats = await drop_legacy_state_tables(
             args.db_path,
             limit=args.limit,
         )
