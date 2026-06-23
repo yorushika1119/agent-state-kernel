@@ -26,6 +26,32 @@ FAST_TESTS = [
     "tests/test_test_tiers.py",
 ]
 
+KMS_FAST_TESTS = [
+    "tests/test_intent_classifier.py",
+    "tests/test_task_switch_coordinator.py",
+    "tests/test_thinker_dispatch_coordinator.py",
+    "tests/test_dispatch_lifecycle_coordinator.py",
+    "tests/test_dispatch_preparation.py",
+    "tests/test_dispatch_response.py",
+    "tests/test_kms_manager_components.py",
+    "tests/test_route_clarification_coordinator.py",
+    "tests/test_kernel_session_coordinator.py",
+    "tests/test_kernel_direct_reply_coordinator.py",
+]
+
+KMS_DISPATCH_TESTS = [
+    *KMS_FAST_TESTS,
+    "tests/test_dispatch_execution.py",
+    "tests/test_manager_observer_views.py",
+    "tests/test_task_conversation_refs.py",
+]
+
+KMS_INTEGRATION_TESTS = [
+    *KMS_DISPATCH_TESTS,
+    "tests/test_task_directory_router.py",
+    "tests/test_smoke_interrupt.py",
+]
+
 CORE_TESTS = [
     *FAST_TESTS,
     "tests/test_task_directory_router.py",
@@ -44,6 +70,9 @@ INTEGRATION_TESTS = [
 
 TIER_TESTS = {
     "fast": FAST_TESTS,
+    "kms-fast": KMS_FAST_TESTS,
+    "kms-dispatch": KMS_DISPATCH_TESTS,
+    "kms-integration": KMS_INTEGRATION_TESTS,
     "core": CORE_TESTS,
     "integration": INTEGRATION_TESTS,
     "full": [],

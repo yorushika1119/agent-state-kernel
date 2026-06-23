@@ -73,6 +73,7 @@ Talker / Hermes
 | KmsManager DispatchDecision builder 拆分 | 已完成，manager 末尾拼装逻辑已移出 |
 | KmsManager response 分支拆分 | 已完成第一版，澄清/直接回复/no-resume 分支已移入 `DispatchResponseCoordinator` |
 | 真实 Hermes Gateway runtime helper 深接入 | 已完成第一版，工具事件走专用 helper，interrupted run 会上报 `ActionBlocked` |
+| KMS 测试细分入口 | 已新增 `test_kms_fast.py`、`test_kms_dispatch.py` 和 `test_kms_integration.py` |
 
 ## 4. 最近完成的阶段
 
@@ -171,6 +172,9 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-decision-b
 | 层级 | 命令 | 使用场景 |
 |---|---|---|
 | fast | `python scripts/test_fast.py` | 小改动、局部重构 |
+| kms-fast | `python scripts/test_kms_fast.py` | 只改 KMS 小组件、分类、response、dispatch helper |
+| kms-dispatch | `python scripts/test_kms_dispatch.py` | 改 KMS 调度、任务切换、conversation refs |
+| kms-integration | `python scripts/test_kms_integration.py` | 改任务路由、打断恢复、KMS 用户场景 |
 | core | `python scripts/test_core.py` | KMS / Kernel / Router 普通核心改动 |
 | integration | `python scripts/test_integration.py` | pipeline、打断、恢复、用户场景等重链路 |
 | full | `python scripts/test_full.py` | 阶段性完成或怀疑跨模块影响 |
@@ -292,3 +296,30 @@ passed
 - live tool interrupt smoke 输出里有 `ModelCall HTTP 404`，我确认这不是 Hermes -> Kernel 上报失败，而是 KMS 内部真实模型调用返回 404 后走了降级路径。
 - 我不确定这是当前 DeepSeek base_url 配置问题，还是该 smoke 场景里不需要 LLM 路由导致的可忽略噪声；本轮没有强行改模型调用。
 - 真实库旧表仍未物理删除。
+
+## 13. 2026-06-23 测试速度分层调整
+
+测试变慢的主要原因不是 `KmsManager` 拆分本身，而是覆盖面扩大：
+
+| 原因 | 影响 |
+|---|---|
+| new-table-only 从 58 条扩到 111 条 | 迁移验证更完整，但耗时明显增加 |
+| core 包含 Router / Observer / SQLite / ASGI 测试 | 比纯 KMS 单元测试慢 |
+| Hermes Gateway 测试导入和 runner 初始化重 | 改 Hermes 时才应该跑 |
+| live smoke 有真实链路等待 | 阶段完成时跑，不适合每次小改跑 |
+
+新增入口：
+
+| 脚本 | 用途 |
+|---|---|
+| `python scripts/test_kms_fast.py` | KMS 小组件快速自检 |
+| `python scripts/test_kms_dispatch.py` | KMS 调度和 conversation refs 自检 |
+| `python scripts/test_kms_integration.py` | KMS 路由、打断、恢复较重链路 |
+
+后续默认节奏：
+
+- 小改 KMS：先跑 `test_kms_fast.py`。
+- 改调度：跑 `test_kms_dispatch.py`。
+- 改路由、打断、恢复：跑 `test_kms_integration.py`。
+- 改状态表迁移：跑 `test_new_table_only.py`。
+- 阶段收尾：再跑 `test_core.py` 或 live smoke。

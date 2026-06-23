@@ -9,7 +9,16 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from test_tiers import CORE_TESTS, FAST_TESTS, INTEGRATION_TESTS, PYTEST_BASE_ARGS, TIER_TESTS
+from test_tiers import (
+    CORE_TESTS,
+    FAST_TESTS,
+    INTEGRATION_TESTS,
+    KMS_DISPATCH_TESTS,
+    KMS_FAST_TESTS,
+    KMS_INTEGRATION_TESTS,
+    PYTEST_BASE_ARGS,
+    TIER_TESTS,
+)
 
 
 def test_test_tier_paths_exist():
@@ -23,6 +32,20 @@ def test_test_tier_paths_exist():
 
 def test_core_tier_includes_fast_tier():
     assert set(FAST_TESTS).issubset(set(CORE_TESTS))
+
+
+def test_kms_dispatch_tier_includes_kms_fast_tier():
+    assert set(KMS_FAST_TESTS).issubset(set(KMS_DISPATCH_TESTS))
+
+
+def test_kms_integration_tier_includes_kms_dispatch_tier():
+    assert set(KMS_DISPATCH_TESTS).issubset(set(KMS_INTEGRATION_TESTS))
+
+
+def test_kms_tiers_are_smaller_than_core_tier():
+    assert len(KMS_FAST_TESTS) < len(CORE_TESTS)
+    assert len(KMS_DISPATCH_TESTS) < len(KMS_INTEGRATION_TESTS)
+    assert len(KMS_INTEGRATION_TESTS) < len(INTEGRATION_TESTS)
 
 
 def test_integration_tier_includes_core_tier():
