@@ -202,4 +202,4 @@ if __name__ == "__main__":
     import uvicorn
 
     port = int(os.getenv("KMS_PORT", "8421"))
-    uvicorn.run("src.kms.server:app", host="127.0.0.1", port=port, reload=False)
+    uvicorn.run("src.kms.transport.server:app", host="127.0.0.1", port=port, reload=False)

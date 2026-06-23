@@ -2100,6 +2100,41 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 79 passed
 ```
 
+## 2026-06-23：KMS transport 目录分组迁移
+
+本阶段继续做结构整理，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/transport/` 子目录。
+- 为什么改：独立 KMS service 和远端 client 属于通信边界，不应该和 KMS 调度、路由、判断模块混在根目录。
+- 改完什么样：`src/kms_server.py` 继续作为兼容启动入口，但实际 app 来自 `src.kms.transport.server`。
+
+移动结果：
+
+| 原位置 | 新位置 |
+|---|---|
+| `src/kms/server.py` | `src/kms/transport/server.py` |
+| `src/kms/remote.py` | `src/kms/transport/remote.py` |
+
+架构边界审查：
+
+- 仍是 KMS 通信入口能力。
+- Kernel 通过 remote client 调用 KMS，不接管 KMS judge 逻辑。
+- 独立 KMS service API 行为不变。
+
+验证结果：
+
+```text
+python -m py_compile src\kms_server.py src\kms\transport\server.py src\kms\transport\remote.py src\kms\pipeline.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider -q tests\test_pipeline_event_flow.py tests\test_state_alias_and_thinker_dispatch.py tests\test_smoke_interrupt.py
+31 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
+
 ## 2026-06-23：KMS notification 目录分组迁移
 
 本阶段继续做结构整理，不改行为。

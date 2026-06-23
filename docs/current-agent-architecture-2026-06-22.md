@@ -599,3 +599,22 @@ src/kms/decisioning/
 | `decisioning/belief.py` | belief 与证据一致性审查 |
 
 这一步只是把 KMS 的“判断工具箱”集中起来，调度权仍在 `KmsManager` 和 dispatch/routing/task 相关模块。
+
+## 26. 2026-06-23 Transport 目录分组
+
+KMS 的独立服务入口和远端 client 已经移动到：
+
+```text
+src/kms/transport/
+  server.py
+  remote.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `transport/server.py` | 独立 KMS service entrypoint，提供 `/evaluate` |
+| `transport/remote.py` | Kernel 远程调用 KMS service 的 HTTP client |
+
+这一步只整理 KMS 的通信边界，不改变 `KMS_MODE=remote` 或 `KMS_URL` 的行为。

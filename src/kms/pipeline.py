@@ -577,7 +577,7 @@ async def arbitrate(
     if kms_url:
         # ── 远程 KMS ──
         # 所有评判器在独立进程中运行，Kernel 只发 HTTP
-        from src.kms.remote import RemoteKMSClient
+        from src.kms.transport.remote import RemoteKMSClient
         client = RemoteKMSClient(kms_url)
         results = await client.evaluate(event, existing_evidence, existing_beliefs)
         mods = client.get_modifications(results)
