@@ -16,6 +16,7 @@
 - 旧表 fallback 读取已可审计。
 - 本轮 core / integration / 真实 smoke 未发现 fallback 命中。
 - 新表-only Store 模式已通过测试。
+- 新表-only 主链路测试已通过。
 - legacy drop 工具已通过临时库测试。
 
 但这还不等于可以安全删表。原因是一次验证只能覆盖当前测试和 smoke 路径，不能证明所有历史 DB、手工调试路径、未覆盖的老数据恢复路径都不再需要旧表。
@@ -74,6 +75,12 @@ python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-legacy-
 
 python scripts/test_core.py --basetemp .tmp\pytest-agent-state-kernel-legacy-drop-core -p no:cacheprovider
 80 passed
+
+python scripts/test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-new-table-only -p no:cacheprovider
+58 passed
+
+python scripts/test_core.py --basetemp .tmp\pytest-agent-state-kernel-legacy-env-core -p no:cacheprovider
+81 passed
 ```
 
 ## 风险
@@ -103,7 +110,7 @@ python scripts/test_core.py --basetemp .tmp\pytest-agent-state-kernel-legacy-dro
 下一步更合适的是：
 
 - 继续保留 fallback audit；
-- 增加新表-only 模式下的 integration / smoke；
+- 继续扩大新表-only 模式下的 integration / smoke；
 - 把 `KmsManager` 继续拆小；
 - 让 Runtime Event Adapter 更完整地接 Hermes 事件；
 - 等真实运行积累更多 0 命中证据后，再进入删表实施阶段。

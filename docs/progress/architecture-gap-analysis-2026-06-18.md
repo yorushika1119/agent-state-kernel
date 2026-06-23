@@ -2176,6 +2176,31 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-legacy-dro
 80 passed
 ```
 
+## 2026-06-23：新表-only 主链路测试脚本
+
+本阶段给旧表退场补了一条可重复验证路径。
+
+通俗说明：
+
+- 改哪里：新增 `scripts/test_new_table_only.py`，`SqliteStore` 支持从 `KERNEL_CREATE_LEGACY_STATE_TABLES` 读取默认开关。
+- 为什么改：后续不能只说“代码看起来不依赖旧表”，要能实际用无旧表模式跑主链路。
+- 改完什么样：执行脚本时会自动设置 `KERNEL_CREATE_LEGACY_STATE_TABLES=0`，再跑不依赖 legacy 夹具的主链路测试。
+
+验证结果：
+
+```text
+python -m py_compile src\stores\sqlite_store.py scripts\test_new_table_only.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-legacy-env -p no:cacheprovider -q tests\test_state_primary_read_switch.py
+6 passed
+
+python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-new-table-only -p no:cacheprovider
+58 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-legacy-env-core -p no:cacheprovider
+81 passed
+```
+
 ## 2026-06-23：KMS Sync stage 拆分
 
 本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。

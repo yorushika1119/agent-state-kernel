@@ -69,6 +69,7 @@ Talker / Hermes
 | 真实 Hermes kernel dispatch 工具事件 helper | 已完成第一版 |
 | 旧表物理删除 removal-check / drop 工具 | 已完成第一版，真实库未执行 drop |
 | KMS pipeline stage 拆分 | 已完成第一轮，Normalize/Validate/Classify/Arbitrate/EventLog/Reduce/Summarize/Gate/Sync 已拆出 |
+| 新表-only 主链路测试 | 已完成第一版，58 passed |
 
 ## 4. 最近完成的阶段
 
@@ -79,7 +80,9 @@ Talker / Hermes
 - `src/kms/pipeline.py` 保留总编排，阶段细节移到 `src/kms/pipeline_stages/`。
 - `Reduce / Summarize / Gate / Sync` 已从大 pipeline 文件中拆出。
 - `SqliteStore` 新增 `create_legacy_state_tables=False`，支持新表-only 模式。
+- `SqliteStore` 支持 `KERNEL_CREATE_LEGACY_STATE_TABLES=0` 环境变量。
 - `scripts/migrate_legacy_state_tables.py` 新增 `--drop-legacy-tables`。
+- `scripts/test_new_table_only.py` 可重复验证无 legacy 表主链路。
 - 默认仍保留 `get_intent / get_plan / get_beliefs / get_commitments` 的旧表读取 fallback。
 
 测试变化：
@@ -109,11 +112,18 @@ python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel-legacy-
 
 python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-legacy-drop-core -p no:cacheprovider
 80 passed
+
+python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-new-table-only -p no:cacheprovider
+58 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-legacy-env-core -p no:cacheprovider
+81 passed
 ```
 
 说明：
 
-- core 变为 80 条，是因为新增了新表-only Store 回归。
+- 最新 core 为 81 条，因为新增了新表-only Store 回归和环境变量开关回归。
+- 新表-only 主链路脚本已验证 pipeline/manager/observer/dispatch/interrupt smoke。
 - 真实库没有执行 `--drop-legacy-tables`。
 
 ## 6. 当前完成度判断
@@ -137,7 +147,7 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-legacy-dro
 
 | 下一步 | 原因 |
 |---|---|
-| 新表-only 模式跑 integration / smoke | 验证真实链路不依赖 legacy 表 |
+| 扩大新表-only integration / real smoke | 目前主链路 58 条通过，还要覆盖真实 Hermes/真实 DB |
 | 继续拆 `KmsManager` 主流程 | dispatch decision 和 task dispatch planner 已拆出，但主流程仍可继续分段 |
 | Runtime Event Adapter 深度接 Hermes | 工具/summary/raw result 方法已有，真实 Hermes 共享 helper 已补，gateway 主流程还可继续逐步接入 |
 | Observer notification WebSocket | SSE 第一版有了，WebSocket 未做 |
@@ -202,5 +212,5 @@ legacy_state_fallback_audits
 
 - 暂时不要直接删除真实库旧表。
 - 继续保留 fallback 审计。
-- 先用新表-only 模式跑 integration / smoke，再考虑真实库物理删除。
+- 继续扩大新表-only 模式测试覆盖，再考虑真实库物理删除。
 - 下一步优先继续拆 `KmsManager` 主流程，或开始让真实 Gateway 工具回调逐步调用新的 kernel dispatch helper。

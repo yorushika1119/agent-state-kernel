@@ -108,6 +108,18 @@ async def test_store_can_run_without_legacy_state_tables():
 
 
 @pytest.mark.asyncio
+async def test_store_can_disable_legacy_state_tables_from_env(monkeypatch):
+    monkeypatch.setenv("KERNEL_CREATE_LEGACY_STATE_TABLES", "0")
+    store = SqliteStore(":memory:")
+    await store.connect()
+    try:
+        for table in ("intent_states", "plan_states", "belief_items", "commitments"):
+            assert not await table_exists(store, table)
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_legacy_getters_prefer_task_first_state_when_both_exist():
     store, engine = await build_runtime()
     try:

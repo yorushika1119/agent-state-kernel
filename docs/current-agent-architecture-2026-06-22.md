@@ -837,6 +837,12 @@ src/kms/pipeline_stages/
 SqliteStore(":memory:", create_legacy_state_tables=False)
 ```
 
+也可以通过环境变量启用：
+
+```text
+KERNEL_CREATE_LEGACY_STATE_TABLES=0
+```
+
 默认行为不变，仍创建旧状态表，保证历史库兼容。
 
 显式关闭时，不再创建：
@@ -857,3 +863,26 @@ SqliteStore(":memory:", create_legacy_state_tables=False)
 它会先执行 removal-check，只有安全时才 drop legacy 状态表。
 
 当前没有对真实 `data/kernel.db` 执行 drop。这个能力只是让后续物理删表有可测试路径。
+
+## 40. 2026-06-23 新表-only 主链路测试
+
+新增脚本：
+
+```text
+scripts/test_new_table_only.py
+```
+
+它会设置：
+
+```text
+KERNEL_CREATE_LEGACY_STATE_TABLES=0
+```
+
+然后跑不依赖 legacy 夹具的主链路测试，验证 pipeline、manager、observer、dispatch 和 interrupt smoke 在没有旧状态表时仍可运行。
+
+验证结果：
+
+```text
+python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-new-table-only -p no:cacheprovider
+58 passed
+```

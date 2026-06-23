@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -82,9 +83,19 @@ class SqliteStore:
     进行——绝不要在外部直接操作数据库。
     """
 
-    def __init__(self, db_path: str, *, create_legacy_state_tables: bool = True):
+    def __init__(
+        self,
+        db_path: str,
+        *,
+        create_legacy_state_tables: Optional[bool] = None,
+    ):
         self.db_path = db_path
         self.conn: Optional[aiosqlite.Connection] = None
+        if create_legacy_state_tables is None:
+            create_legacy_state_tables = (
+                os.getenv("KERNEL_CREATE_LEGACY_STATE_TABLES", "1").lower()
+                not in ("0", "false", "no")
+            )
         self.create_legacy_state_tables = create_legacy_state_tables
 
     # ==================================================================
