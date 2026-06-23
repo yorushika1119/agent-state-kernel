@@ -703,3 +703,20 @@ src/kms/pipeline_stages/
 | `pipeline_stages/validate.py` | 检查 Talker/Thinker 权限、run 是否 stale、intent version 和 belief payload 是否有效 |
 
 这一步继续按设计文档拆 pipeline；验证规则仍由 KMS 执行，不下沉到 Kernel。
+
+## 32. 2026-06-23 Classify Stage 拆分
+
+KMS 9 阶段 pipeline 的 Classify 阶段已经移动到：
+
+```text
+src/kms/pipeline_stages/
+  classify.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `pipeline_stages/classify.py` | 把事件类型映射到 intent / plan / evidence / belief / execution / commitment / progress 类别 |
+
+这一步继续按设计文档拆 pipeline；事件分类仍是 KMS 进入 reducer 前的内部路由。

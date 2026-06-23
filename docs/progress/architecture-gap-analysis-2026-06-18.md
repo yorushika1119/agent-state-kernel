@@ -2100,6 +2100,41 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 79 passed
 ```
 
+## 2026-06-23：KMS Classify stage 拆分
+
+本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/pipeline_stages/classify.py`。
+- 为什么改：Classify 是独立阶段，负责把事件类型映射到对应状态类别。
+- 改完什么样：`pipeline.py` 继续编排阶段，但分类表放在单独 stage 文件里。
+
+移动结果：
+
+| 原内容 | 新位置 |
+|---|---|
+| `ClassifyResult` | `src/kms/pipeline_stages/classify.py` |
+| `classify` | `src/kms/pipeline_stages/classify.py` |
+
+架构边界审查：
+
+- 仍是 KMS pipeline 的 Classify 阶段。
+- Kernel reducer 只接收已经分类后的归约调用。
+- 事件类别路由不进入 Thinker。
+
+验证结果：
+
+```text
+python -m py_compile src\kms\pipeline.py src\kms\pipeline_stages\classify.py
+
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider -q tests\test_pipeline_event_flow.py tests\test_missing_coverage.py tests\test_smoke_interrupt.py
+35 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
+
 ## 2026-06-23：KMS Validate stage 拆分
 
 本阶段继续按架构设计文档的 9 阶段拆 `pipeline.py`，不改行为。

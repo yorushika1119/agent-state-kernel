@@ -35,6 +35,7 @@ from src.kernel.state_reducer import (
     synthesize_progress,
 )
 from src.kms.decisioning.model import DEEPSEEK_API_KEY
+from src.kms.pipeline_stages.classify import ClassifyResult, classify
 from src.kms.pipeline_stages.normalize import NormalizeResult, normalize
 from src.kms.pipeline_stages.validate import ValidateResult, validate
 from src.kms.runtime.execution_payload import merge_execution_payload
@@ -95,59 +96,6 @@ CANDIDATE_TO_FINAL_EVENT = {
     EventType.BELIEF_PROPOSED: EventType.BELIEF_UPDATED,
     EventType.EVIDENCE_CANDIDATE_FOUND: EventType.EVIDENCE_ACCEPTED,
 }
-
-
-# ===========================================================================
-# 第 4 阶段：Classify — 事件类别路由
-# ===========================================================================
-
-@dataclass
-class ClassifyResult:
-    """Classify 阶段的输出——将事件路由到正确的状态类别。"""
-    category: str  # "intent"、"plan"、"evidence"、"belief"、"execution"、"commitment"、"progress"
-
-
-def classify(event: CognitiveEvent) -> ClassifyResult:
-    """确定此事件属于哪个认知状态类别。
-
-    告诉 Reducer 需要更新哪些状态表。
-    分类依据是 request_type（EventType），不是 payload 内容。
-    已验证：payload 再混乱也不会跨表污染。
-    """
-    et = event.event_type
-
-    classification_map = {
-        EventType.INTENT_UPDATED: "intent",
-        EventType.PLAN_PROPOSED: "plan",
-        EventType.PLAN_ACCEPTED: "plan",
-        EventType.EVIDENCE_CANDIDATE_FOUND: "evidence",
-        EventType.EVIDENCE_ACCEPTED: "evidence",
-        EventType.BELIEF_PROPOSED: "belief",
-        EventType.BELIEF_UPDATED: "belief",
-        EventType.TOOL_STARTED: "execution",
-        EventType.TOOL_COMPLETED: "execution",
-        EventType.TOOL_FAILED: "execution",
-        EventType.TOOL_RETRIED: "execution",
-        EventType.STEP_STARTED: "plan",
-        EventType.TASK_COMPLETED: "plan",
-        EventType.TASK_FAILED: "plan",
-        EventType.CONFLICT_DETECTED: "belief",
-        EventType.VERIFICATION_WARNING_RAISED: "belief",
-        EventType.COMMITMENT_CREATED: "commitment",
-        EventType.COMMITMENT_UPDATED: "commitment",
-        EventType.SESSION_CREATED: "intent",
-        EventType.SESSION_CANCELLED: "intent",
-        # 扩展 Thinker 协议
-        EventType.REPLAN_REQUEST: "plan",
-        EventType.RISK_ASSESSMENT: "belief",        # 风险作为特殊信念
-        EventType.REASONING_SUMMARY: "execution",   # 推理摘要存入执行账本
-        EventType.RAW_RESULT_AVAILABLE: "execution",# 原始结果就绪信号
-        EventType.ACTION_BLOCKED: "execution",      # 阻塞同失败处理
-        EventType.VERIFICATION_RESULT: "belief",    # 验证结果更新信念
-        EventType.COMPLETION_CHECK: "progress",     # 完成度检查
-    }
-
-    return ClassifyResult(category=classification_map.get(et, "execution"))
 
 
 # ===========================================================================
