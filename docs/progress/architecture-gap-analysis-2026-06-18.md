@@ -1818,3 +1818,85 @@ NO_LEGACY_FALLBACK_HITS
 - 本轮多次真实链路仍未命中旧表 fallback。
 - KMS 没有偏离架构设计：调度仍在 KMS，状态事实仍在 Kernel/store。
 - Runtime Event Adapter 更适合真实 Hermes 逐步接入工具事件，但还没有强行改 Hermes 巨型 gateway 主流程。
+
+## 2026-06-23：TaskDispatchPlanner、Hermes kernel dispatch helper、removal-check
+
+本阶段继续按架构文档推进，重点是拆 KMS 内部复杂度，但不把调度逻辑下沉到 Kernel。
+
+代码变化：
+
+- 新增 `src/kms/task_dispatch_planner.py`：
+  - 负责 KMS 内部 task 切换计划；
+  - 处理 routed task、new task、resume task、默认 interrupt 场景；
+  - 只做 KMS 调度计划，不直接做 Kernel reducer。
+- `KmsManager` 改为调用 `TaskDispatchPlanner`：
+  - `KmsManager` 仍负责用户消息主流程；
+  - `TaskDispatchPlanner` 负责生成 task switch plan；
+  - `Kernel` 仍只负责状态存储和 views。
+- 真实 Hermes 部署目录更新 `hermes_cli/kernel_dispatch.py`：
+  - 新增 `async_submit_runtime_event`
+  - 新增 `async_submit_tool_started`
+  - 新增 `async_submit_tool_completed`
+  - 新增 `async_submit_tool_failed`
+  - 这些 helper 与主项目 `RuntimeEventAdapter` 的 payload 形状保持一致。
+- `scripts/migrate_legacy_state_tables.py` 新增 `--removal-check`：
+  - 检查旧表行数；
+  - 检查是否还有未迁移 session；
+  - 检查 fallback audit 命中数；
+  - 只读检查，不删除旧表。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' -q tests\test_task_directory_router.py tests\test_smoke_interrupt.py tests\test_requested_user_scenarios.py
+30 passed in 96.32s
+
+python -m pytest -o addopts='' -q tests\test_legacy_state_migration.py
+2 passed in 1.82s
+
+python -m pytest -o addopts='' -q tests\hermes_cli\test_kernel_dispatch.py
+3 passed in 1.30s
+
+python scripts\test_core.py
+79 passed in 42.58s
+
+python scripts\test_integration.py
+115 passed in 129.03s
+
+python scripts\live_llm_router_smoke.py
+FINAL_DECISION=select_existing
+OTHER_STATUS_ACTION=respond_from_kernel
+OTHER_STATUS_REQUIRES_THINKER=False
+EXPLICIT_NEW_TASK_ACTION=start_new_task
+
+python scripts\live_interrupt_demo.py --real-model --scenario interrupt
+ARCHITECTURE_GLOSSARY_CHECK: passed
+old dispatch=failed
+new dispatch=completed
+active_run=empty
+
+python scripts\report_legacy_fallback_audit.py
+ROWS=0
+HIT_COUNT=0
+NO_LEGACY_FALLBACK_HITS
+
+python scripts\migrate_legacy_state_tables.py data\kernel.db --removal-check
+safe_to_remove=true
+unmigrated_sessions=0
+fallback_hit_count=0
+legacy_rows.intent_states=6
+```
+
+架构边界审查：
+
+- 未把任务调度逻辑放进 Kernel。
+- 未让 Thinker 自己决定打断或恢复。
+- 未把完整聊天记录写入 Kernel。
+- 未直接删除旧表。
+- Hermes 侧只补共享 helper，Gateway 主流程仍通过 KMS dispatch 生命周期。
+
+当前结论：
+
+- KMS 内部结构进一步收敛，但 `KmsManager.dispatch_user_message()` 仍可继续拆。
+- 旧表 removal-check 当前显示没有阻塞项，但仍建议继续观察真实运行，不立即物理删表。
+- Runtime Event Adapter 和 Hermes kernel dispatch helper 已具备工具事件接入基础，下一步可以逐步改 Gateway 工具回调使用这些 helper。

@@ -23,6 +23,7 @@ from src.kms.task_coordinators import (
     ResumeCoordinator,
     TaskSwitchCoordinator,
 )
+from src.kms.task_dispatch_planner import TaskDispatchPlanner
 from src.kms.task_routing_coordinator import TaskRoutingCoordinator
 from src.kms.thinker_dispatch_coordinator import ThinkerDispatchCoordinator
 
@@ -41,6 +42,10 @@ class KmsManager:
             store,
             self.interrupts,
             self.resumes,
+        )
+        self.task_dispatch_planner = TaskDispatchPlanner(
+            store,
+            self.task_switches,
         )
         self.lifecycle = DispatchLifecycleCoordinator(store, engine)
         self.conversation_refs = ConversationRefCoordinator(store)
@@ -199,151 +204,61 @@ class KmsManager:
 
         run_id = self.lifecycle.new_run_id()
         previous_run_id = session.active_run_id or ""
-        active_task = None
         event = None
-        reason = "" if created_session else "reuse_existing_session"
-        action = "start_new_task" if created_session else "interrupt_and_replan"
-        task_action = "start_new_task" if created_session else "continue_active_task"
-        active_task_id = session.active_task_id or ""
-        last_paused_task_id = session.last_paused_task_id or ""
-        should_submit_message = True
-        resume_context: Dict[str, Any] = {}
         current_task_brief_version = await self._task_brief_version_for_session(session)
         next_task_brief_version = current_task_brief_version + 1
-        use_routed_task = (
-            route.routing_decision == "select_existing"
-            and route_target_task is not None
-            and not explicit_new_task_requested
-            and not wants_new_task
-            and not wants_resume
+
+        task_plan = await self.task_dispatch_planner.plan(
+            session=session,
+            created_session=created_session,
+            route=route,
+            route_target_task=route_target_task,
+            explicit_new_task_requested=explicit_new_task_requested,
+            wants_new_task=wants_new_task,
+            wants_resume=wants_resume,
+            wants_same_task_steer=wants_same_task_steer,
+            previous_run_id=previous_run_id,
+            run_id=run_id,
+            current_task_brief_version=current_task_brief_version,
+            next_task_brief_version=next_task_brief_version,
+            user_session_id=user_session.user_session_id,
+            agent_id=agent_id,
         )
-        routed_task = None
-        if use_routed_task:
-            routed_task = await self.store.get_task(
-                route_target_task.kernel_session_id,
-                route_target_task.task_id,
+        if task_plan.no_resume_task:
+            response_text = "当前没有可继续的已挂起任务。"
+            await self.direct_replies.record_static_reply(
+                session=session,
+                user_text=text,
+                response_text=response_text,
+                user_session_id=user_session.user_session_id,
+                route=route,
+                task_id=session.active_task_id or "",
+                runtime_refs=runtime_refs,
+                metadata={
+                    "reason": "no_paused_task_to_resume",
+                },
+            )
+            return kernel_response_decision(
+                kernel_session_id=session.kernel_session_id,
+                intent_version=current_task_brief_version,
+                run_id=session.active_run_id or "",
+                session_status=session.status.value,
+                reason="no_paused_task_to_resume",
+                task_action="respond_from_kernel",
+                task_id=session.active_task_id or "",
+                kernel_response=response_text,
+                user_session_id=user_session.user_session_id,
+                route_decision=route.routing_decision,
             )
 
-        if (
-            use_routed_task
-            and routed_task is not None
-            and session.active_task_id == routed_task.task_id
-        ):
-            active_task = routed_task
-            task_action = "continue_active_task"
-            reason = reason or "route_selected_active_task"
-            wants_same_task_steer = True
-        elif (
-            use_routed_task
-            and routed_task is not None
-            and session.active_task_id != routed_task.task_id
-        ):
-            if session.active_task_id:
-                last_paused_task_id = await self.task_switches.pause_current_task(
-                    session,
-                    interrupted_run_id=previous_run_id,
-                    user_session_id=user_session.user_session_id,
-                    agent_id=agent_id,
-                    task_brief_version=current_task_brief_version,
-                )
-            else:
-                last_paused_task_id = ""
-            active_task, resume_context = await self.task_switches.activate_existing_task(
-                session,
-                routed_task,
-                run_id=run_id,
-                user_session_id=user_session.user_session_id,
-                agent_id=agent_id,
-                task_brief_version=next_task_brief_version,
-            )
-            active_task_id = routed_task.task_id
-            action = "interrupt_and_replan" if previous_run_id else "start_new_task"
-            task_action = "continue_routed_task"
-            reason = "route_selected_existing_task"
-            should_submit_message = False
-        elif session.active_task_id and wants_new_task:
-            last_paused_task_id = await self.task_switches.pause_current_task(
-                session,
-                interrupted_run_id=previous_run_id,
-                user_session_id=user_session.user_session_id,
-                agent_id=agent_id,
-                task_brief_version=current_task_brief_version,
-                fallback_last_paused_task_id=last_paused_task_id,
-            )
-            active_task_id = ""
-            action = (
-                "start_new_task"
-                if explicit_new_task_requested or not previous_run_id
-                else "interrupt_and_replan"
-            )
-            task_action = "start_new_task"
-            reason = (
-                "explicit_new_task_requested"
-                if explicit_new_task_requested
-                else "reuse_existing_session"
-            )
-        elif wants_resume:
-            resume_task = await self.task_switches.get_resume_task(session)
-            if resume_task is None:
-                response_text = "当前没有可继续的已挂起任务。"
-                await self.direct_replies.record_static_reply(
-                    session=session,
-                    user_text=text,
-                    response_text=response_text,
-                    user_session_id=user_session.user_session_id,
-                    route=route,
-                    task_id=session.active_task_id or "",
-                    runtime_refs=runtime_refs,
-                    metadata={
-                        "reason": "no_paused_task_to_resume",
-                    },
-                )
-                return kernel_response_decision(
-                    kernel_session_id=session.kernel_session_id,
-                    intent_version=current_task_brief_version,
-                    run_id=session.active_run_id or "",
-                    session_status=session.status.value,
-                    reason="no_paused_task_to_resume",
-                    task_action="respond_from_kernel",
-                    task_id=session.active_task_id or "",
-                    kernel_response=response_text,
-                    user_session_id=user_session.user_session_id,
-                    route_decision=route.routing_decision,
-                )
-            if session.active_task_id and session.active_task_id != resume_task.task_id:
-                last_paused_task_id = await self.task_switches.pause_current_task(
-                    session,
-                    interrupted_run_id=previous_run_id,
-                    user_session_id=user_session.user_session_id,
-                    agent_id=agent_id,
-                    task_brief_version=current_task_brief_version,
-                )
-            else:
-                last_paused_task_id = ""
-            active_task, resume_context = await self.task_switches.activate_existing_task(
-                session,
-                resume_task,
-                run_id=run_id,
-                user_session_id=user_session.user_session_id,
-                agent_id=agent_id,
-                task_brief_version=next_task_brief_version,
-            )
-            active_task_id = resume_task.task_id
-            action = "interrupt_and_replan" if previous_run_id else "start_new_task"
-            task_action = "continue_paused_task"
-            reason = "resume_previous_task"
-            should_submit_message = False
-        elif previous_run_id and not wants_same_task_steer:
-            last_paused_task_id = await self.task_switches.pause_current_task(
-                session,
-                interrupted_run_id=previous_run_id,
-                user_session_id=user_session.user_session_id,
-                agent_id=agent_id,
-                task_brief_version=current_task_brief_version,
-                fallback_last_paused_task_id=last_paused_task_id,
-            )
-            active_task_id = ""
-            task_action = "start_new_task"
+        active_task = task_plan.active_task
+        action = task_plan.action
+        task_action = task_plan.task_action
+        active_task_id = task_plan.active_task_id
+        last_paused_task_id = task_plan.last_paused_task_id
+        should_submit_message = task_plan.should_submit_message
+        resume_context: Dict[str, Any] = task_plan.resume_context
+        reason = task_plan.reason
 
         await self.lifecycle.activate_run(
             session,

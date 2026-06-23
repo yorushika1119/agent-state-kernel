@@ -155,13 +155,78 @@ async def migrate_legacy_state_tables(
         await store.close()
 
 
+async def check_legacy_state_table_removal(
+    db_path: str,
+    *,
+    limit: int = 10000,
+) -> dict[str, object]:
+    store = SqliteStore(db_path)
+    await store.connect()
+    stats: dict[str, object] = {
+        "sessions": 0,
+        "legacy_rows": 0,
+        "unmigrated_sessions": 0,
+        "fallback_hit_count": 0,
+        "safe_to_remove": False,
+        "blockers": [],
+        "legacy_rows_by_table": {},
+    }
+    try:
+        sessions = await store.list_sessions(limit=limit)
+        stats["sessions"] = len(sessions)
+        legacy_rows_by_table: dict[str, int] = {}
+        unmigrated_sessions: set[str] = set()
+
+        for row in sessions:
+            session_id = row["kernel_session_id"]
+            for legacy, new in LEGACY_TO_NEW.items():
+                legacy_rows = await _legacy_rows(store, legacy, session_id)
+                legacy_rows_by_table[legacy] = (
+                    legacy_rows_by_table.get(legacy, 0) + len(legacy_rows)
+                )
+                if legacy_rows and not await _has_row(store, new, session_id):
+                    unmigrated_sessions.add(session_id)
+
+        audit_rows = await store.get_legacy_state_fallback_audit()
+        fallback_hit_count = sum(int(row["hit_count"] or 0) for row in audit_rows)
+        legacy_rows = sum(legacy_rows_by_table.values())
+        blockers: list[str] = []
+        if unmigrated_sessions:
+            blockers.append("unmigrated_legacy_state")
+        if fallback_hit_count:
+            blockers.append("legacy_fallback_observed")
+
+        stats.update(
+            {
+                "legacy_rows": legacy_rows,
+                "unmigrated_sessions": len(unmigrated_sessions),
+                "fallback_hit_count": fallback_hit_count,
+                "safe_to_remove": not blockers,
+                "blockers": blockers,
+                "legacy_rows_by_table": legacy_rows_by_table,
+            }
+        )
+        return stats
+    finally:
+        await store.close()
+
+
 async def _main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("db_path", help="Path to the kernel SQLite database.")
     parser.add_argument("--write", action="store_true", help="Write missing new-table rows.")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing new-table rows.")
     parser.add_argument("--limit", type=int, default=10000)
+    parser.add_argument("--removal-check", action="store_true", help="Only check physical removal readiness.")
     args = parser.parse_args()
+
+    if args.removal_check:
+        stats = await check_legacy_state_table_removal(
+            args.db_path,
+            limit=args.limit,
+        )
+        print(json.dumps(stats, ensure_ascii=False, indent=2))
+        return 0
 
     stats = await migrate_legacy_state_tables(
         args.db_path,

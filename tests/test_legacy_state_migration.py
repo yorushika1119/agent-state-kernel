@@ -8,7 +8,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.migrate_legacy_state_tables import migrate_legacy_state_tables
+from scripts.migrate_legacy_state_tables import (
+    check_legacy_state_table_removal,
+    migrate_legacy_state_tables,
+)
 from src.kernel.engine import KernelEngine
 from src.stores.sqlite_store import SqliteStore
 
@@ -137,3 +140,41 @@ async def test_migrate_legacy_state_tables_dry_run_then_write(tmp_path):
         assert todos[0].statement == "legacy todo"
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_check_legacy_state_table_removal_reports_blockers(tmp_path):
+    db_path = tmp_path / "kernel.db"
+    store = SqliteStore(str(db_path))
+    await store.connect()
+    engine = KernelEngine(store)
+    session = await engine.create_session(agent_id="agent-removal-check")
+    sid = session.kernel_session_id
+    try:
+        await store.conn.execute(
+            "DELETE FROM task_brief_states WHERE kernel_session_id = ?",
+            (sid,),
+        )
+        await store.conn.execute(
+            """INSERT INTO intent_states
+               (kernel_session_id, intent_version, goal, constraints,
+                output_format, priority, cancelled, last_user_update_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (sid, 1, "legacy only", "[]", "", "normal", 0, None, None),
+        )
+        await store.conn.commit()
+    finally:
+        await store.close()
+
+    blocked = await check_legacy_state_table_removal(str(db_path))
+    assert blocked["safe_to_remove"] is False
+    assert blocked["legacy_rows"] == 1
+    assert blocked["unmigrated_sessions"] == 1
+    assert blocked["blockers"] == ["unmigrated_legacy_state"]
+
+    await migrate_legacy_state_tables(str(db_path), write=True)
+    ready = await check_legacy_state_table_removal(str(db_path))
+    assert ready["safe_to_remove"] is True
+    assert ready["legacy_rows"] == 1
+    assert ready["unmigrated_sessions"] == 0
+    assert ready["fallback_hit_count"] == 0

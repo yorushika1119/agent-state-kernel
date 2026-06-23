@@ -38,10 +38,10 @@
 
 ```text
 python scripts/test_core.py
-78 passed in 37.00s
+79 passed in 42.58s
 
 python scripts/test_integration.py
-114 passed in 123.34s
+115 passed in 129.03s
 
 python scripts/live_llm_router_smoke.py
 passed
@@ -55,6 +55,12 @@ python scripts/report_legacy_fallback_audit.py
 ROWS=0
 HIT_COUNT=0
 NO_LEGACY_FALLBACK_HITS
+
+python scripts/migrate_legacy_state_tables.py data/kernel.db --removal-check
+safe_to_remove=true
+unmigrated_sessions=0
+fallback_hit_count=0
+legacy_rows.intent_states=6
 ```
 
 ## 风险

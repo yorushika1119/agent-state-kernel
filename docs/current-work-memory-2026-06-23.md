@@ -64,7 +64,10 @@ Talker / Hermes
 | 旧状态表写入退场 | 已完成 |
 | 旧表 fallback 使用审计 | 已完成第一版，含查看脚本，本轮真实链路未命中 |
 | KmsManager dispatch decision 小拆分 | 已完成第一版 |
+| KmsManager task dispatch planner 小拆分 | 已完成第一版 |
 | Runtime Event Adapter Hermes 工具事件入口 | 已完成第一版 |
+| 真实 Hermes kernel dispatch 工具事件 helper | 已完成第一版 |
+| 旧表物理删除 removal-check | 已完成第一版 |
 
 ## 4. 最近完成的阶段
 
@@ -121,7 +124,7 @@ active_run=empty
 
 | 模块 | 粗略完成度 | 说明 |
 |---|---:|---|
-| KMS / Kernel / Thinker 分层 | 91% | 职责基本清楚，dispatch decision 已从 manager 拆出 |
+| KMS / Kernel / Thinker 分层 | 92% | 职责基本清楚，dispatch decision 和 task dispatch planner 已从 manager 拆出 |
 | 打断与恢复 | 90% | integration 和真实 Hermes smoke 通过 |
 | Thinker dispatch 生命周期 | 85% | claim / heartbeat / complete / fail 已接通 |
 | Task Router 多任务路由 | 75% | 支持常见指代，LLM Router 已接入 |
@@ -129,7 +132,7 @@ active_run=empty
 | User Session 多任务管理 | 80% | user_sessions / global_tasks / conversation refs 已有 |
 | Observer / Manager / Notification | 65% | API / SSE / policy 第一版可用 |
 | 新状态表迁移 | 90% | 新表主读，写入代码已切到新表 |
-| 旧表退场 | 84% | 写入代码已移除，读取 fallback 已审计且有查看脚本，物理删表未做 |
+| 旧表退场 | 86% | 写入代码已移除，读取 fallback 已审计且有查看脚本，removal-check 已有，物理删表未做 |
 | 测试体系 | 80% | fast / core / integration / full 已分层 |
 
 当前没有发现完成不了的硬阻塞。剩下主要是收尾、加固和产品化。
@@ -139,8 +142,8 @@ active_run=empty
 | 下一步 | 原因 |
 |---|---|
 | 继续观察旧表 fallback 审计数据 | 决定后续能不能物理删除旧表 |
-| 继续拆 `KmsManager` 任务切换分支 | dispatch decision 已拆出，但主分支仍偏长 |
-| Runtime Event Adapter 深度接 Hermes | 工具/summary/raw result 方法已有，真实 Hermes gateway 还可继续逐步接入 |
+| 继续拆 `KmsManager` 主流程 | dispatch decision 和 task dispatch planner 已拆出，但主流程仍可继续分段 |
+| Runtime Event Adapter 深度接 Hermes | 工具/summary/raw result 方法已有，真实 Hermes 共享 helper 已补，gateway 主流程还可继续逐步接入 |
 | Observer notification WebSocket | SSE 第一版有了，WebSocket 未做 |
 | Notification 高级策略 | 当前只是第一版，复杂升级/优先级还可增强 |
 | 旧表物理删除 | 最后阶段再做，需要确认历史数据迁移和 fallback 使用情况 |
@@ -193,11 +196,14 @@ legacy_state_fallback_audits
 - `data/kernel.db` 本轮 fallback audit 行数为 0。
 - `scripts/report_legacy_fallback_audit.py` 已可直接查看命中情况。
 - `DispatchDecision` 已从 `KmsManager` 拆出到 `src/kms/dispatch_decision.py`。
+- `TaskDispatchPlanner` 已从 `KmsManager` 拆出到 `src/kms/task_dispatch_planner.py`。
 - `RuntimeEventAdapter` 已支持 Hermes 常见工具事件和 summary/raw result 事件提交。
+- 真实 Hermes 的 `hermes_cli/kernel_dispatch.py` 已补工具事件 helper。
+- `scripts/migrate_legacy_state_tables.py --removal-check` 已可检查删表前置条件。
 
 建议下一步：
 
 - 暂时不要物理删除旧表。
 - 继续保留 fallback 审计。
 - 累积更多真实运行数据后，再做旧表物理删除方案。
-- 下一步优先继续拆 `KmsManager` 的任务切换分支。
+- 下一步优先继续拆 `KmsManager` 主流程，或开始让真实 Gateway 工具回调逐步调用新的 kernel dispatch helper。

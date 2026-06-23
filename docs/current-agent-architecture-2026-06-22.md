@@ -266,6 +266,7 @@ ack / resolve
 | 旧状态表写入退场 | 已完成，integration 和真实 smoke 通过 |
 | 旧表 fallback 使用审计 | 已完成第一版，含查看脚本，本轮真实链路未命中 |
 | Runtime Event Adapter Hermes 工具事件入口 | 已完成第一版 |
+| 真实 Hermes kernel dispatch 工具事件 helper | 已完成第一版 |
 | 测试分层 fast / core / integration / full | 已完成 |
 | 真实 Router smoke | 已通过 |
 | 真实 Hermes interrupt smoke | 已通过 |
@@ -288,7 +289,9 @@ ack / resolve
 | 旧状态表写入退场 | 已完成 |
 | 旧表 fallback 使用审计 | 已完成第一版 |
 | KmsManager dispatch decision 小拆分 | 已完成第一版 |
+| KmsManager task dispatch planner 小拆分 | 已完成第一版 |
 | Runtime Event Adapter Hermes 事件方法 | 已完成第一版 |
+| 旧表物理删除 removal-check | 已完成第一版 |
 | 测试分层 | 已完成 |
 | 移除旧表写入后的 integration / real smoke | 已通过 |
 
@@ -298,8 +301,8 @@ ack / resolve
 
 | 差距 | 说明 |
 |---|---|
-| KmsManager 仍偏大 | 返回对象已拆出，但任务切换分支仍集中在一个方法里 |
-| Runtime Event Adapter 深度接入 Hermes | 工具/summary/raw result 方法已有，真实 Hermes 侧还可继续接入更多 runtime refs |
+| KmsManager 仍偏大 | 返回对象和 task dispatch planner 已拆出，但 dispatch 主流程还可继续拆 |
+| Runtime Event Adapter 深度接入 Hermes | 工具/summary/raw result 方法已有，真实 Hermes 共享 helper 已补，Gateway 主流程还可继续逐步接入 |
 | Observer notification WebSocket | SSE 第一版已完成，WebSocket 未做 |
 | Notification 高级优先级策略 | 第一版策略表已完成，复杂升级策略未做 |
 | 旧表读取 fallback | 仍保留，用于历史 DB 兼容；已有命中审计 |
@@ -311,7 +314,7 @@ ack / resolve
 
 | 模块 | 完成度 | 说明 |
 |---|---:|---|
-| KMS / Kernel / Thinker 分层 | 91% | 职责基本清晰，dispatch decision 已从 manager 拆出 |
+| KMS / Kernel / Thinker 分层 | 92% | 职责基本清晰，dispatch decision 和 task dispatch planner 已从 manager 拆出 |
 | 打断与恢复 | 90% | integration 和真实 Hermes smoke 通过 |
 | Thinker dispatch 生命周期 | 85% | claim / heartbeat / complete / fail 已接通 |
 | Task Router 多任务路由 | 75% | 支持常见指代，LLM Router 已接入 |
@@ -319,7 +322,7 @@ ack / resolve
 | User Session 多任务管理 | 80% | user_sessions / global_tasks / conversation refs 已有 |
 | Observer / Manager / Notification | 65% | API / SSE / policy 第一版可用 |
 | 新状态表迁移 | 90% | 新表主读、写入代码已切到新表 |
-| 旧表退场 | 84% | 写入代码已移除，fallback 已审计且有查看脚本，物理删除未完成 |
+| 旧表退场 | 86% | 写入代码已移除，fallback 已审计且有查看脚本，removal-check 已有，物理删除未完成 |
 | 测试体系 | 80% | fast / core / integration / full 已分层 |
 
 当前没有发现完成不了的硬阻塞。剩余主要是收尾、加固和产品化。
