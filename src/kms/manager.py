@@ -2,30 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from typing import Optional
 
-from src.kms.context.conversation_refs import ConversationRefCoordinator
 from src.kms.dispatch.decision import (
     DispatchDecision,
     thinker_run_decision_from_execution,
 )
-from src.kms.dispatch.execution import DispatchExecutionCoordinator
-from src.kms.dispatch.lifecycle import DispatchLifecycleCoordinator
-from src.kms.dispatch.preparation import DispatchPreparationCoordinator
-from src.kms.dispatch.response import DispatchResponseCoordinator
-from src.kms.context.kernel_session import KernelSessionCoordinator
-from src.kms.response.clarification import RouteClarificationCoordinator
-from src.kms.response.direct_reply import KernelDirectReplyCoordinator
-from src.kms.response.kernel_direct_responder import KernelDirectResponder
-from src.kms.task.coordinators import (
-    InterruptCoordinator,
-    ResumeCoordinator,
-    TaskSwitchCoordinator,
-)
-from src.kms.task.dispatch_planner import TaskDispatchPlanner
-from src.kms.routing.task_routing import TaskRoutingCoordinator
-from src.kms.dispatch.thinker_dispatch import ThinkerDispatchCoordinator
+from src.kms.manager_components import build_kms_manager_components
 
 
 class KmsManager:
@@ -34,56 +17,27 @@ class KmsManager:
     def __init__(self, store, engine, *, enable_llm_router: bool | None = None):
         self.store = store
         self.engine = engine
-        self.sessions = KernelSessionCoordinator(store, engine)
-        self.direct_responder = KernelDirectResponder(store, engine)
-        self.interrupts = InterruptCoordinator(store)
-        self.resumes = ResumeCoordinator(store)
-        self.task_switches = TaskSwitchCoordinator(
+        components = build_kms_manager_components(
             store,
-            self.interrupts,
-            self.resumes,
+            engine,
+            enable_llm_router=enable_llm_router,
         )
-        self.task_dispatch_planner = TaskDispatchPlanner(
-            store,
-            self.task_switches,
-        )
-        self.lifecycle = DispatchLifecycleCoordinator(store, engine)
-        self.conversation_refs = ConversationRefCoordinator(store)
-        self.thinker_dispatches = ThinkerDispatchCoordinator(
-            self.lifecycle,
-            self.conversation_refs,
-        )
-        self.route_clarifications = RouteClarificationCoordinator(store)
-        self.direct_replies = KernelDirectReplyCoordinator(
-            self.direct_responder,
-            self.conversation_refs,
-        )
-        self.dispatch_responses = DispatchResponseCoordinator(
-            store=store,
-            route_clarifications=self.route_clarifications,
-            direct_replies=self.direct_replies,
-        )
-        self.dispatch_execution = DispatchExecutionCoordinator(
-            store=store,
-            sessions=self.sessions,
-            lifecycle=self.lifecycle,
-            task_dispatch_planner=self.task_dispatch_planner,
-            task_switches=self.task_switches,
-            thinker_dispatches=self.thinker_dispatches,
-        )
-        self.enable_llm_router = (
-            os.getenv("KMS_ENABLE_LLM_ROUTER") == "1"
-            if enable_llm_router is None
-            else enable_llm_router
-        )
-        self.task_router = TaskRoutingCoordinator(
-            store,
-            enable_llm=self.enable_llm_router,
-        )
-        self.dispatch_preparation = DispatchPreparationCoordinator(
-            self.task_router,
-            self.sessions,
-        )
+        self.sessions = components.sessions
+        self.direct_responder = components.direct_responder
+        self.interrupts = components.interrupts
+        self.resumes = components.resumes
+        self.task_switches = components.task_switches
+        self.task_dispatch_planner = components.task_dispatch_planner
+        self.lifecycle = components.lifecycle
+        self.conversation_refs = components.conversation_refs
+        self.thinker_dispatches = components.thinker_dispatches
+        self.route_clarifications = components.route_clarifications
+        self.direct_replies = components.direct_replies
+        self.dispatch_responses = components.dispatch_responses
+        self.dispatch_execution = components.dispatch_execution
+        self.enable_llm_router = components.enable_llm_router
+        self.task_router = components.task_router
+        self.dispatch_preparation = components.dispatch_preparation
 
     async def dispatch_user_message(
         self,
