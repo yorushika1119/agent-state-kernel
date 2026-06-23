@@ -26,7 +26,7 @@
 | `dispatch/response.py` | 包装澄清、Kernel 直接回复、no-resume 回复 | 保留 | 已移动到 `kms/dispatch/` |
 | `response/direct_reply.py` | 记录 Kernel 直接回复 conversation ref | 暂留 | 作为 `DispatchResponseCoordinator` 的底层 helper |
 | `response/clarification.py` | 生成澄清问题并记录引用 | 暂留 | 作为 `DispatchResponseCoordinator` 的底层 helper |
-| `conversation_ref_coordinator.py` | conversation refs 统一写入 | 保留 | 不应分散到多个模块 |
+| `context/conversation_refs.py` | conversation refs 统一写入 | 保留 | 不应分散到多个模块 |
 | `notification/coordinator.py` | observer/talker 通知策略 | 保留 | 独立职责明确 |
 | `task/scoped_state.py` | task-local 状态过滤 | 保留 | 支撑直接回复和视图 |
 | `audit/state_source.py` | 新旧状态来源审计 | 保留 | 旧表退场前需要 |
@@ -58,6 +58,10 @@ src/kms/
   routing/
     task_routing.py
     task_context_router.py
+  context/
+    conversation_refs.py
+    kernel_session.py
+    dispatch_context.py
   response/
     kernel_direct_responder.py
     direct_reply.py

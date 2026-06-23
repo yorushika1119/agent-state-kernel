@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
+from src.kms.context.conversation_refs import ConversationRefCoordinator
 
 
 class RouteClarificationCoordinator:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
+from src.kms.context.conversation_refs import ConversationRefCoordinator
 from src.kms.dispatch.decision import (
     DispatchDecision,
     thinker_run_decision,
@@ -14,7 +14,7 @@ from src.kms.dispatch.execution import DispatchExecutionCoordinator
 from src.kms.dispatch.lifecycle import DispatchLifecycleCoordinator
 from src.kms.dispatch.preparation import DispatchPreparationCoordinator
 from src.kms.dispatch.response import DispatchResponseCoordinator
-from src.kms.kernel_session_coordinator import KernelSessionCoordinator
+from src.kms.context.kernel_session import KernelSessionCoordinator
 from src.kms.response.clarification import RouteClarificationCoordinator
 from src.kms.response.direct_reply import KernelDirectReplyCoordinator
 from src.kms.response.kernel_direct_responder import KernelDirectResponder

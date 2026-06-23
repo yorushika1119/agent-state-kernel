@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.kernel.engine import KernelEngine
-from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
+from src.kms.context.conversation_refs import ConversationRefCoordinator
 from src.kms.dispatch.lifecycle import DispatchLifecycleCoordinator
 from src.kms.dispatch.thinker_dispatch import ThinkerDispatchCoordinator
 from src.schema.state import TaskRouteDecision

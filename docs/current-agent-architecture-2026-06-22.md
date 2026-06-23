@@ -555,3 +555,24 @@ src/kms/audit/
 | `audit/state_source.py` | 审计 task-first 新表是否已经能作为主读来源，以及旧表 fallback 是否仍被命中 |
 
 这一步只是把旧表退场前的审计能力独立成包，不改变 `/kms/state-source-audit` API 行为。
+
+## 24. 2026-06-23 Context 目录分组
+
+KMS 的上下文准备和引用记录模块已经移动到：
+
+```text
+src/kms/context/
+  conversation_refs.py
+  kernel_session.py
+  dispatch_context.py
+```
+
+职责不变：
+
+| 模块 | 职责 |
+|---|---|
+| `context/conversation_refs.py` | 记录 task-local conversation refs，只保存摘要和 runtime 引用 |
+| `context/kernel_session.py` | 根据 runtime session 找到或创建 kernel session |
+| `context/dispatch_context.py` | 从 Kernel 状态构造 KMS dispatch 判断所需的上下文快照 |
+
+这一步符合“用户消息先进入 KMS，由 KMS 准备上下文再调度”的设计边界。

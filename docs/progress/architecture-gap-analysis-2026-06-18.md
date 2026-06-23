@@ -440,7 +440,7 @@ completed_at
 
 新增文件：
 
-- `src/kms/dispatch_context.py`
+- `src/kms/context/dispatch_context.py`
 
 当前 KMS 在 `dispatch_user_message()` 里会先读取 Kernel 状态，再做意图分类：
 
@@ -2170,6 +2170,41 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cach
 
 - 不带 `--basetemp` 的第一次运行失败在 pytest `tmp_path` 创建阶段，原因是当前沙箱不能写 `C:\Users\EDY\AppData\Local\Temp\pytest-of-EDY`。
 - 加入项目内临时目录后同一组测试通过，说明不是 audit 迁移导致的代码问题。
+
+## 2026-06-23：KMS context 目录分组迁移
+
+本阶段继续做结构整理，不改行为。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/context/` 子目录。
+- 为什么改：conversation refs、kernel session 查找、dispatch context 构造都是 KMS 在正式调度前准备上下文的能力，应该放在一起。
+- 改完什么样：KMS 主流程先通过 context 包准备上下文，再进入 routing / dispatch / response。
+
+移动结果：
+
+| 原位置 | 新位置 |
+|---|---|
+| `src/kms/conversation_ref_coordinator.py` | `src/kms/context/conversation_refs.py` |
+| `src/kms/kernel_session_coordinator.py` | `src/kms/context/kernel_session.py` |
+| `src/kms/dispatch_context.py` | `src/kms/context/dispatch_context.py` |
+
+架构边界审查：
+
+- 仍是 KMS 上下文准备能力。
+- Kernel 只提供状态读取接口。
+- Thinker 不参与上下文构造。
+- Conversation refs 仍不保存完整聊天记录。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider -q tests\test_kernel_session_coordinator.py tests\test_dispatch_preparation.py tests\test_kernel_direct_reply_coordinator.py tests\test_thinker_dispatch_coordinator.py tests\test_task_conversation_refs.py tests\test_task_directory_router.py tests\test_smoke_interrupt.py
+35 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel -p no:cacheprovider
+79 passed
+```
 
 ## 2026-06-23：KMS response 目录分组迁移
 

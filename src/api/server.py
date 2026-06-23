@@ -23,7 +23,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from src.kms.conversation_ref_coordinator import ConversationRefCoordinator
+from src.kms.context.conversation_refs import ConversationRefCoordinator
 from src.kms.manager import KmsManager
 from src.kms.notification.coordinator import NotificationCoordinator
 from src.kms.audit.state_source import StateSourceAudit
