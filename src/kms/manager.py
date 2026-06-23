@@ -12,8 +12,7 @@ from src.kms.dispatch_decision import (
     thinker_run_decision,
 )
 from src.kms.dispatch_lifecycle_coordinator import DispatchLifecycleCoordinator
-from src.kms.dispatch_context import build_kernel_dispatch_context
-from src.kms.intent_classifier import classify_dispatch_intent_with_llm
+from src.kms.dispatch_preparation import DispatchPreparationCoordinator
 from src.kms.kernel_direct_reply_coordinator import KernelDirectReplyCoordinator
 from src.kms.kernel_direct_responder import KernelDirectResponder
 from src.kms.kernel_session_coordinator import KernelSessionCoordinator
@@ -67,6 +66,10 @@ class KmsManager:
             store,
             enable_llm=self.enable_llm_router,
         )
+        self.dispatch_preparation = DispatchPreparationCoordinator(
+            self.task_router,
+            self.sessions,
+        )
 
     async def _task_brief_version_for_session(
         self,
@@ -101,45 +104,24 @@ class KmsManager:
         mode: str = "auto",
         runtime_refs: Optional[dict] = None,
     ) -> DispatchDecision:
-        routing = await self.task_router.route_message(
-            text,
-            user_session_id=user_session_id,
+        prepared = await self.dispatch_preparation.prepare(
+            text=text,
             runtime_session_id=runtime_session_id,
             runtime_id=runtime_id,
             runtime_type=runtime_type,
             agent_id=agent_id,
-        )
-        user_session = routing.user_session
-        route = routing.route
-        route_target_task = routing.route_target_task
-
-        session = await self.sessions.find_target_session(
-            target_session_id=target_session_id or routing.routed_session_id,
-            runtime_session_id=runtime_session_id,
-        )
-        dispatch_context = await build_kernel_dispatch_context(self.store, session)
-        intent = await classify_dispatch_intent_with_llm(
-            text,
+            target_session_id=target_session_id,
+            user_session_id=user_session_id,
             mode=mode,
-            session=session,
-            context=dispatch_context,
         )
-        wants_new_task = intent.intent == "new_task"
-        explicit_new_task_requested = (
-            wants_new_task
-            and intent.source in {"explicit", "rule"}
-            and intent.reason in {"explicit_new_task_mode", "explicit_new_task_marker"}
-        )
-        wants_resume = intent.intent == "resume_previous_task"
-        wants_kernel_response = intent.intent == "kernel_answerable_query"
-        wants_same_task_steer = intent.intent == "same_task_steer"
-        route_clarification_applies = (
-            route.needs_user_clarification
-            and not wants_new_task
-            and not wants_resume
-        )
+        user_session = prepared.user_session
+        route = prepared.route
+        route_target_task = prepared.route_target_task
+        session = prepared.session
+        intent = prepared.intent
+        flags = prepared.flags
 
-        if route_clarification_applies:
+        if flags.route_clarification_applies:
             clarification_response = self.route_clarifications.build_response(route)
             await self.route_clarifications.record_exchange(
                 user_text=text,
@@ -162,7 +144,7 @@ class KmsManager:
                 route_decision=route.routing_decision,
             )
 
-        if session and wants_kernel_response:
+        if session and flags.wants_kernel_response:
             response_task_id = (
                 route.target_task_id
                 if route.routing_decision == "select_existing" and route.target_task_id
@@ -213,10 +195,10 @@ class KmsManager:
             created_session=created_session,
             route=route,
             route_target_task=route_target_task,
-            explicit_new_task_requested=explicit_new_task_requested,
-            wants_new_task=wants_new_task,
-            wants_resume=wants_resume,
-            wants_same_task_steer=wants_same_task_steer,
+            explicit_new_task_requested=flags.explicit_new_task_requested,
+            wants_new_task=flags.wants_new_task,
+            wants_resume=flags.wants_resume,
+            wants_same_task_steer=flags.wants_same_task_steer,
             previous_run_id=previous_run_id,
             run_id=run_id,
             current_task_brief_version=current_task_brief_version,

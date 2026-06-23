@@ -1900,3 +1900,39 @@ legacy_rows.intent_states=6
 - KMS 内部结构进一步收敛，但 `KmsManager.dispatch_user_message()` 仍可继续拆。
 - 旧表 removal-check 当前显示没有阻塞项，但仍建议继续观察真实运行，不立即物理删表。
 - Runtime Event Adapter 和 Hermes kernel dispatch helper 已具备工具事件接入基础，下一步可以逐步改 Gateway 工具回调使用这些 helper。
+## 2026-06-23：DispatchPreparation 拆分与 Hermes Gateway 事件 helper 收敛
+
+本阶段继续按架构设计文档推进，目标是让 KMS 更像调度层，而不是把所有判断都堆在 `KmsManager.dispatch_user_message()` 里；同时让真实 Hermes Gateway 的 runtime event 上报复用统一 helper，避免 Gateway 和 CLI 各写一套 `/kms/request` 逻辑。
+
+通俗说明：
+
+- 改哪里：新增 `src/kms/dispatch_preparation.py`，把“用户消息先属于哪个 user session、路由到哪个 task、应该是什么意图”从 `KmsManager` 里拆出来。
+- 为什么改：KMS 是管理调度层，`KmsManager` 应该负责串流程，不应该长期塞满路由、意图、session 查找等细节。
+- 改完什么样：`KmsManager` 现在先拿到 `DispatchPreparation`，再决定澄清、Kernel 直接回答、创建/恢复/打断任务、创建 thinker dispatch。
+- Hermes 侧改哪里：真实部署目录 `C:\Users\EDY\AppData\Local\hermes\hermes-agent` 的 `gateway/run.py` 改为调用 `hermes_cli.kernel_dispatch.async_submit_runtime_event()`。
+- Hermes 侧为什么改：工具事件、summary、raw result 都应该走同一套 runtime event helper，后续 CLI/Gateway 不会分叉。
+- Hermes 侧改完什么样：Gateway 的 `ToolStarted / ToolCompleted / ToolFailed / ReasoningSummary / RawResultAvailable / TaskCompleted / TaskFailed` 仍然通过 `_submit_kernel_event()` 入口发出，但底层统一走 helper；stale run 仍返回 `False`，不会污染当前 run。
+
+架构边界审查：
+
+- 没有把调度逻辑放进 Kernel；Kernel 仍只负责状态、事件、视图。
+- 没有让 Thinker 自己决定打断或恢复；Hermes 仍只 claim / heartbeat / complete / fail dispatch 并提交 runtime event。
+- 没有改变 `respond_from_kernel / interrupt_and_replan / resume_context` 语义。
+- 没有删除旧表；旧表物理删除仍等待更长真实链路观察。
+
+验证结果：
+
+```text
+python -m pytest -o addopts='' -q tests\test_dispatch_preparation.py tests\test_task_directory_router.py tests\test_smoke_interrupt.py
+26 passed in 64.40s
+
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python -m pytest -o addopts='' -q tests\hermes_cli\test_kernel_dispatch.py tests\gateway\test_busy_session_ack.py::TestKernelRunReporting
+15 passed in 3.84s
+```
+
+当前结论：
+
+- KMS 分层又前进了一步，`dispatch_preparation` 已经承担前置只读判断。
+- Gateway runtime event 已收敛到共享 helper，真实 Hermes 与项目内 Runtime Event Adapter 的协议形状更一致。
+- 下一步应继续拆 `KmsManager` 里“创建 run、提交用户消息、创建 task、创建 thinker dispatch”这一段执行编排，或者继续把 Hermes 更深的工具/流式事件引用补齐到 runtime refs。

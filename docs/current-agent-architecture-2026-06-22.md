@@ -352,3 +352,28 @@ ack / resolve
 再完善通知推送
 最后再逐步移除旧表兼容依赖
 ```
+## 15. 2026-06-23 本轮架构更新
+
+本轮没有改变系统的大方向，仍然遵守：
+
+```text
+Talker / Hermes 面向用户
+KMS 负责调度和任务选择
+Kernel 负责状态和视图
+Thinker 负责真实执行
+```
+
+新增和调整：
+
+| 模块 | 变化 | 作用 |
+|---|---|---|
+| `DispatchPreparationCoordinator` | 从 `KmsManager` 拆出 | 先准备 user session、task route、target session、intent flags |
+| `KmsManager` | 主流程变薄 | 不再直接塞满路由和意图判断细节，继续作为 KMS 总控 |
+| Hermes Gateway `_submit_kernel_event()` | 改为调用共享 helper | Gateway/CLI 后续共用同一套 runtime event 上报逻辑 |
+| `hermes_cli.kernel_dispatch.async_submit_runtime_event()` | 支持 stale run 返回 `None` | 旧 run 被打断后不会污染当前 run，Gateway 仍得到 `False` |
+
+当前效果：
+
+- 用户消息进来后，KMS 先做“准备判断”，再决定是否直接由 Kernel 回答、澄清、继续、恢复、打断或创建 thinker dispatch。
+- Hermes Gateway 的工具事件、推理摘要、原始结果、任务完成/失败仍从原入口发出，但底层统一走 `kernel_dispatch` helper。
+- 调度逻辑没有下沉到 Kernel，符合架构设计文档。
