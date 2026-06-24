@@ -3036,3 +3036,27 @@ ARCHITECTURE_GLOSSARY_CHECK: passed
 - `ModelCall HTTP 404` 已修复，根因是 demo 把外部模型 HTTP 请求错误路由到了 in-memory Kernel。
 - “LLM 很慢”的主要假象已修复，真实 demo 这次约 58 秒完成，其中包含 Hermes 冷启动、第一次模型调用、打断、第二次模型回答。
 - 剩余可优化项是冷启动导入 Hermes/KMS 仍偏慢，属于性能优化，不阻塞当前架构主线。
+
+补充分段计时：
+```text
+python -u scripts\live_interrupt_demo.py --real-model --scenario interrupt --timing
+command wall time: 51.8s
+internal timed total: 40.0s
+```
+
+| 阶段 | 本次耗时 |
+|---|---:|
+| setup_ready | 4.084s |
+| user1_enqueued | 0.001s |
+| first_dispatch_ready | 16.606s |
+| second_delay | 1.515s |
+| user2_handled | 6.618s |
+| mid_thinker_view_loaded | 0.010s |
+| runs_finished | 11.119s |
+| final_views_loaded | 0.026s |
+
+初步判断：
+- 冷启动/导入/进程外开销约 12s。
+- 第一轮到 dispatch ready 约 16.6s，是当前最大段之一。
+- 第二条用户消息触发打断并进入新 dispatch 约 6.6s，还可以继续优化。
+- 新 run 完成约 11.1s，主要受真实模型回答影响。
