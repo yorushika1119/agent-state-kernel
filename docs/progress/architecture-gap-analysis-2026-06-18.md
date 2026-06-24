@@ -3210,3 +3210,60 @@ internal timed total: 26.6s
 - KMS/Kernel 仍不是慢点，第二条消息进入打断路径约 0.12s。
 - 已消除 DeepSeek 场景下不必要的 Ollama 探测，首轮 ready 明显下降。
 - 剩余可优化点在 Hermes/Thinker：OpenAI-compatible client 初始化约 3.4s，工具加载约 3.1s。
+
+## 2026-06-24：Hermes client / tool 加载慢点继续拆分
+
+本轮只增加诊断探针，不改变 KMS / Kernel / Thinker 的职责边界。
+
+通俗说明：
+- 改哪里：真实 Hermes 目录 `C:\Users\EDY\AppData\Local\hermes\hermes-agent` 的 `agent_init.py`、`model_tools.py`、`live_interrupt_demo.py` 和对应测试。
+- 为什么改：之前只知道 Hermes 首轮 ready 还要 6-8 秒，但不知道具体慢在 client 创建、工具注册表，还是 tool_search。
+- 改完什么样：真实 smoke 的 timing 表能看到 `OpenAI client 创建`、`registry.get_definitions`、`schema sanitize`、`tool_search assembly` 的分段耗时。
+
+验证命令：
+
+```text
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python -m pytest -o addopts='' -q tests\gateway\test_interrupt_demo_output.py tests\test_model_tools.py::test_get_tool_definitions_timing_hook_records_cache_hit tests\agent\test_model_metadata.py -q
+passed
+
+python -u scripts\live_interrupt_demo.py --real-model --scenario interrupt --timing
+passed
+```
+
+真实 smoke 结果：
+
+| 项目 | 结果 |
+|---|---|
+| command wall time | 46.6s |
+| internal timed total | 29.96s |
+| `KERNEL_AFTER_USER#1` | `start_new_task` |
+| `KERNEL_AFTER_USER#2` | `interrupt_and_replan` |
+| old dispatch | `failed` |
+| new dispatch | `completed` |
+| architecture glossary check | `passed` |
+
+关键耗时：
+
+| 阶段 | 耗时 | 判断 |
+|---|---:|---|
+| `kms_dispatch_1` | 0.196s | 正常，不是瓶颈 |
+| `kms_dispatch_2` | 0.114s | 打断调度很快 |
+| `gateway.busy_handler_1` | 0.125s | 第二条消息进入 busy/interrupt 路径很快 |
+| `gateway.agent_init.after_openai_client_create_1` | 3.575s | Hermes client 创建仍偏慢 |
+| `gateway.model_tools.after_registry_definitions_1` | 1.697s | 工具注册表 / check_fn 阶段偏慢 |
+| `gateway.model_tools.after_tool_search_1` | 1.905s | tool_search 组装偏慢 |
+| `gateway.ai_agent_init_1` | 7.775s | Hermes AIAgent 冷启动总耗时 |
+| `first_dispatch_ready` | 13.618s | 首轮可打断 ready 仍主要受 Hermes 初始化影响 |
+| `agent_run_2` | 12.168s | 真实模型生成耗时 |
+
+当前判断：
+- 架构方向没有偏离设计文档：KMS 仍只做调度，Kernel 仍只管状态，Hermes 仍只执行 dispatch 并上报结果。
+- 打断机制已经可用：用户第二条消息可以打断旧 run，新 run 接管并返回最终答案。
+- KMS/Kernel 已不是性能瓶颈，后续优化不要塞回 Kernel 或 KMS。
+- 剩余性能问题集中在 Hermes/Thinker 冷启动：client 创建、工具注册表、tool_search 组装。
+
+下一步建议：
+1. 先优化 `model_tools.after_tool_search_1`，因为它约 1.9s，且更可能通过缓存或延迟计算降低。
+2. 再分析 `model_tools.after_registry_definitions_1`，确认是不是工具 `check_fn` 做了慢 IO。
+3. 最后看 `after_openai_client_create_1`，这可能来自 OpenAI SDK / httpx 初始化，优化空间不确定。
