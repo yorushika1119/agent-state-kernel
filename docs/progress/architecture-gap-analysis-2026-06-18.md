@@ -2990,3 +2990,49 @@ fallback_hit_count=0
 |---|---|
 | `ModelCall HTTP 404` | 真实 tool interrupt smoke 中出现，但不影响打断链路；我不确定是否是 DeepSeek base_url 配置噪声，本轮未强行改 |
 | 真实库物理删旧表 | removal-check 已通过，但仍未执行 drop，建议最后备份后再做 |
+
+## 2026-06-24：真实 Hermes 打断 smoke 修复
+
+本轮聚焦“真实 Hermes Gateway/CLI + KMS + Kernel”链路的可演示性，不改变架构边界。
+
+通俗说明：
+- 改哪里：真实 Hermes 目录 `C:\Users\EDY\AppData\Local\hermes\hermes-agent` 的 Gateway busy interrupt 和 live demo harness。
+- 为什么改：之前看起来像 LLM 很慢，实际有两个问题：一是 demo 每次内部 Kernel 调用都会顺手创建外网 HTTP client，Windows SSL 初始化很慢；二是 agent 还在启动窗口时，Gateway 没把 adapter interrupt 标记置上，旧任务可能继续跑完。
+- 改完什么样：内部 Kernel 调用只走 in-memory ASGI，不再初始化外网 SSL；只有访问 DeepSeek 等外部 URL 时才创建真实 HTTP client。用户第二次请求触发 `interrupt_and_replan` 后，旧 run 会被中断并标记失败，新 run 接管并返回新回答。
+
+架构边界审查：
+| 模块 | 本轮职责 |
+|---|---|
+| Hermes Gateway | 接收用户第二条消息，执行 interrupt 标记，停止旧 thinker run，并继续执行新 dispatch |
+| KMS | 继续负责 `start_new_task / interrupt_and_replan` 决策，不直接执行工具 |
+| Kernel/Store | 继续保存 run/dispatch/task conversation refs，不负责调度 |
+| Thinker/Hermes Agent | 只执行任务或响应 interrupt |
+
+验证结果：
+```text
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python -m pytest -o addopts='' -q tests\gateway\test_interrupt_demo_output.py tests\gateway\test_busy_session_ack.py::TestBusySessionAck::test_interrupt_busy_message_sets_adapter_interrupt_event_when_agent_pending
+9 passed
+
+cd C:\program1\agent-state-kernel
+python -u scripts\live_tool_interrupt_smoke.py
+passed
+
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python -u scripts\live_interrupt_demo.py --real-model --scenario interrupt
+passed
+```
+
+真实模型 smoke 关键输出：
+```text
+KERNEL_AFTER_USER#1: action=start_new_task
+KERNEL_AFTER_USER#2: action=interrupt_and_replan
+first thinker_dispatch: failed
+second thinker_dispatch: completed
+ARCHITECTURE_GLOSSARY_CHECK: passed
+```
+
+当前结论：
+- `ModelCall HTTP 404` 已修复，根因是 demo 把外部模型 HTTP 请求错误路由到了 in-memory Kernel。
+- “LLM 很慢”的主要假象已修复，真实 demo 这次约 58 秒完成，其中包含 Hermes 冷启动、第一次模型调用、打断、第二次模型回答。
+- 剩余可优化项是冷启动导入 Hermes/KMS 仍偏慢，属于性能优化，不阻塞当前架构主线。

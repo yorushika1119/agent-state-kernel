@@ -37,6 +37,7 @@ class DispatchPreparationCoordinator:
     def __init__(self, task_router, sessions):
         self.task_router = task_router
         self.sessions = sessions
+        self.enable_llm_intent = True
 
     async def prepare(
         self,
@@ -71,6 +72,7 @@ class DispatchPreparationCoordinator:
             mode=mode,
             session=session,
             context=dispatch_context,
+            enable_llm=self.enable_llm_intent,
         )
         flags = self._build_flags(intent, routing.route)
         return DispatchPreparation(

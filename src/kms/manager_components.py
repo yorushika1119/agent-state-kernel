@@ -49,11 +49,17 @@ def build_kms_manager_components(
     engine,
     *,
     enable_llm_router: bool | None = None,
+    enable_llm_intent: bool | None = None,
 ) -> KmsManagerComponents:
     llm_enabled = (
         os.getenv("KMS_ENABLE_LLM_ROUTER") == "1"
         if enable_llm_router is None
         else enable_llm_router
+    )
+    llm_intent_enabled = (
+        os.getenv("KMS_ENABLE_LLM_INTENT", "1") != "0"
+        if enable_llm_intent is None
+        else enable_llm_intent
     )
     sessions = KernelSessionCoordinator(store, engine)
     direct_responder = KernelDirectResponder(store, engine)
@@ -93,6 +99,7 @@ def build_kms_manager_components(
         task_router,
         sessions,
     )
+    dispatch_preparation.enable_llm_intent = llm_intent_enabled
     return KmsManagerComponents(
         sessions=sessions,
         direct_responder=direct_responder,

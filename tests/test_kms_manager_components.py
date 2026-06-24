@@ -42,3 +42,19 @@ async def test_build_kms_manager_components_explicit_flag_overrides_env(monkeypa
         assert components.task_router.enable_llm is False
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_build_kms_manager_components_can_disable_llm_intent(monkeypatch):
+    monkeypatch.setenv("KMS_ENABLE_LLM_INTENT", "1")
+    store = SqliteStore(":memory:")
+    await store.connect()
+    try:
+        components = build_kms_manager_components(
+            store,
+            KernelEngine(store),
+            enable_llm_intent=False,
+        )
+        assert components.dispatch_preparation.enable_llm_intent is False
+    finally:
+        await store.close()

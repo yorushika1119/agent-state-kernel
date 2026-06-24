@@ -14,13 +14,21 @@ from src.kms.manager_components import build_kms_manager_components
 class KmsManager:
     """Owns runtime-level user message dispatch and interrupt decisions."""
 
-    def __init__(self, store, engine, *, enable_llm_router: bool | None = None):
+    def __init__(
+        self,
+        store,
+        engine,
+        *,
+        enable_llm_router: bool | None = None,
+        enable_llm_intent: bool | None = None,
+    ):
         self.store = store
         self.engine = engine
         components = build_kms_manager_components(
             store,
             engine,
             enable_llm_router=enable_llm_router,
+            enable_llm_intent=enable_llm_intent,
         )
         self.sessions = components.sessions
         self.direct_responder = components.direct_responder
