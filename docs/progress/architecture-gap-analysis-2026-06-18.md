@@ -3267,3 +3267,47 @@ passed
 1. 先优化 `model_tools.after_tool_search_1`，因为它约 1.9s，且更可能通过缓存或延迟计算降低。
 2. 再分析 `model_tools.after_registry_definitions_1`，确认是不是工具 `check_fn` 做了慢 IO。
 3. 最后看 `after_openai_client_create_1`，这可能来自 OpenAI SDK / httpx 初始化，优化空间不确定。
+
+## 2026-06-24：Hermes tool_search 与 delegate schema 冷启动优化
+
+本轮继续优化真实 smoke 的 Hermes/Thinker 冷启动，不改变架构边界。
+
+通俗说明：
+- 改哪里：真实 Hermes 目录的 `model_tools.py`、`tools/delegate_tool.py` 和相关测试。
+- 为什么改：上一轮发现 `tool_search` 组装约 1.9s，`registry.get_definitions` 还有约 1.7s；继续拆后发现 `tool_search` 在用“未知 provider”方式解析上下文长度，`delegate_task` 动态 schema 又会为了读配置 import 整个 CLI。
+- 改完什么样：`tool_search` 读取 `model.provider/base_url/context_length` 后再解析上下文长度；`delegate_task` 只有在 CLI 已经加载时才读 `CLI_CONFIG`，否则直接读持久配置，避免 gateway 冷启动时把 CLI/auxiliary 一起拉起来。
+
+验证命令：
+
+```text
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python -m pytest -o addopts='' -q tests\test_model_tools.py::test_get_tool_definitions_timing_hook_records_cache_hit tests\test_model_tools.py::test_resolve_active_context_length_uses_provider_config tests\gateway\test_interrupt_demo_output.py tests\tools\test_tool_search.py -q
+passed
+
+python -m pytest -o addopts='' -q tests\tools\test_delegate.py::TestDelegateRequirements::test_schema_description_advertises_runtime_limits tests\tools\test_delegate.py::TestDelegateRequirements::test_load_config_does_not_import_cli_when_cli_is_not_loaded -q
+passed
+
+python -u scripts\live_interrupt_demo.py --real-model --scenario interrupt --timing
+passed
+```
+
+优化前后关键变化：
+
+| 阶段 | 优化前 | 优化后 | 判断 |
+|---|---:|---:|---|
+| `gateway.model_tools.after_tool_search_1` | 1.905s | 0.047s 左右 | 已基本消除 |
+| `gateway.model_tools.after_tool_search_context_length_1` | 无细分 | 0.017-0.018s | 上下文长度解析不再是瓶颈 |
+| `gateway.model_tools.after_tool_search_assemble_1` | 无细分 | 0.000s | 组装本身很快 |
+| `delegate_task dynamic_schema_overrides` | 约 1.888s | 约 0.148s | 避免误 import CLI 后明显下降 |
+| `kms_dispatch_2` | 约 0.11s | 约 0.11-0.12s | KMS 打断调度仍正常 |
+
+最新真实 smoke 结论：
+- 打断链路仍正确：旧 dispatch `failed`，新 dispatch `completed`，最终只显示新任务回答。
+- `tool_search` 慢点已基本解决。
+- `registry.get_definitions` 还剩约 1.5-1.8s，主要来自多个工具 `check_fn` 冷探测累计，例如 vision/image/browser/tts 等。
+- `after_openai_client_create` 仍有 2.8-4.3s 波动，这属于 Hermes/OpenAI SDK/httpx client 冷启动方向，暂时不应放到 KMS/Kernel 里解决。
+
+下一步建议：
+1. 继续拆工具 `check_fn` 冷探测：优先看 vision、image、tts、browser 这几类是否应该懒检查或按启用 toolset 检查。
+2. 再看 OpenAI-compatible client 创建能否复用共享 client 或延迟创建。
+3. 保持 KMS/Kernel 不动，因为当前瓶颈已经明确在 Hermes/Thinker 冷启动。
