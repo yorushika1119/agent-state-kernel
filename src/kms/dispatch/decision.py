@@ -22,6 +22,7 @@ class DispatchDecision:
     user_session_id: str = ""
     route_decision: str = ""
     thinker_dispatch_id: str = ""
+    debug_timings: list[dict[str, Any]] = field(default_factory=list)
 
 
 def kernel_response_decision(

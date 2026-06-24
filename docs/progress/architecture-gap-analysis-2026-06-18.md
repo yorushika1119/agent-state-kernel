@@ -3085,3 +3085,45 @@ internal timed total: 36.3s
 - 当前打断体验的主要慢点是 `kms_dispatch_2=6.094s`，即 KMS 调度接口调用耗时。
 - 第二轮模型回答 `agent_run_2=9.756s` 属于真实模型生成耗时，暂时不是架构问题。
 - `agent_run_1` 与 `agent_run_2` 有嵌套重叠，不能直接相加；它表示第一轮后台任务从开始到被第二轮接管后的整体生命周期。
+
+## 2026-06-24：KMS dispatch 重复 LLM normalize 移除
+
+继续拆 `kms_dispatch_2` 后确认，慢点集中在：
+```text
+kms_dispatch_2.execute.submit_user_message ~= 6.4s
+```
+
+原因：
+- KMS 已经在 dispatch 阶段完成用户意图和任务路由判断。
+- 但后续写入 Kernel 事件流时，仍以 `talker/raw` 方式提交用户文本。
+- `talker/raw` 会进入 pipeline normalize，并在有 DeepSeek key 时再次调用 LLM。
+- 这和新架构方向不一致：KMS 已经是管理/调度层，Kernel 不应该再用 raw normalize 重复判断同一个 KMS dispatch。
+
+本轮修改：
+| 修改点 | 结果 |
+|---|---|
+| `DispatchLifecycleCoordinator.submit_user_message` | 从 `request_type=raw` 改为 `SUBMIT_USER_MESSAGE` |
+| 新任务消息 | 写入 `goal=text` |
+| 继续当前任务消息 | 写入 `constraints=[text]`，避免覆盖原任务目标 |
+| KMS debug timings | 增加 `execute.*` 内部阶段 |
+| Hermes timing smoke | 显示 KMS 内部阶段耗时 |
+
+优化后真实 smoke：
+```text
+python -u scripts\live_interrupt_demo.py --real-model --scenario interrupt --timing
+command wall time: 75.8s
+```
+
+关键耗时变化：
+| 阶段 | 优化前 | 优化后 |
+|---|---:|---:|
+| kms_dispatch_1 | 5.955s | 0.406s |
+| kms_dispatch_1.execute.submit_user_message | 5.825s | 0.049s |
+| kms_dispatch_2 | 6.502s | 0.116s |
+| kms_dispatch_2.execute.submit_user_message | 6.434s | 0.034s |
+| user2_handled | 0.009s | 0.011s |
+
+当前判断：
+- KMS dispatch 侧的重复 LLM normalize 已移除，打断路径的 KMS 调度不再是主要瓶颈。
+- `user2_handled` 仍是毫秒级，说明 Gateway 收到第二条消息后的本地处理很快。
+- 剩余耗时主要来自真实 Hermes agent/model：`first_dispatch_ready` 和 `agent_run_2`。

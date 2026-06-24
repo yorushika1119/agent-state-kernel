@@ -68,13 +68,13 @@ class DispatchLifecycleCoordinator:
             interrupt_event=interrupt_event,
         )
 
-    async def submit_user_message(self, session_id: str, text: str):
+    async def submit_user_message(self, session_id: str, text: str, *, payload: dict | None = None):
         ok, err, event = await self.engine.submit_event(
             EventSubmission(
                 session_id=session_id,
                 component="talker",
-                request_type="raw",
-                payload={"text": text},
+                request_type="SUBMIT_USER_MESSAGE",
+                payload=payload or {"goal": text, "text": text},
             )
         )
         if not ok:

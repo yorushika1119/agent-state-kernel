@@ -83,6 +83,7 @@ class DispatchUserMessageRequest(BaseModel):
     user_session_id: str = ""
     mode: str = "auto"  # auto|new_task
     runtime_refs: Optional[dict] = None
+    debug_timings: bool = False
 
 
 class CompleteRunRequest(BaseModel):
@@ -398,8 +399,9 @@ async def dispatch_user_message(req: DispatchUserMessageRequest):
         user_session_id=req.user_session_id,
         mode=req.mode,
         runtime_refs=req.runtime_refs,
+        debug_timings=req.debug_timings,
     )
-    return {
+    payload = {
         "action": decision.action,
         "kernel_session_id": decision.kernel_session_id,
         "intent_version": decision.intent_version,
@@ -415,6 +417,9 @@ async def dispatch_user_message(req: DispatchUserMessageRequest):
         "route_decision": decision.route_decision,
         "thinker_dispatch_id": decision.thinker_dispatch_id,
     }
+    if decision.debug_timings:
+        payload["debug_timings"] = decision.debug_timings
+    return payload
 
 
 @app.post("/kms/complete-run")
