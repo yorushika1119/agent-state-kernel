@@ -3163,3 +3163,50 @@ internal timed total: 33.8s
 - 打断本身已经很快，第二条消息进入 Gateway 后 `busy_handler` 约 0.125s。
 - 首轮 ready 慢点在 Hermes agent 创建/初始化/首次模型侧准备之间，下一步需要继续拆 `agent_promoted` 前的内部阶段。
 - `command wall time` 比 `internal timed total` 多约 16s，原因可能是 Python 进程启动、导入或退出清理等脚本计时外开销；具体原因还不确定。
+
+## 2026-06-24：Hermes AIAgent 初始化慢点优化
+
+继续拆 `AIAgent.__init__` 后确认，首轮 ready 的主要慢点来自 Hermes/Thinker 自身初始化，不是 KMS/Kernel：
+
+| 初始化阶段 | 优化前 |
+|---|---:|
+| `gateway.agent_init.after_client_1` | 3.962s |
+| `gateway.agent_init.after_tools_1` | 5.835s |
+| `gateway.agent_init.after_context_engine_1` | 4.229s |
+| `gateway.ai_agent_init_1` | 14.660s |
+| `first_dispatch_ready` | 21.131s |
+
+根因之一：
+- `ContextCompressor` 初始化会调用 `get_model_context_length()`。
+- 旧逻辑会对任意 `base_url` 都尝试 Ollama `/api/show` 探测。
+- DeepSeek 这类已知云端点不应该走 Ollama 探测，这会白等数秒。
+
+本轮修改：
+| 修改点 | 结果 |
+|---|---|
+| `agent.model_metadata._should_probe_ollama_api_show` | 只允许 Ollama、Ollama Cloud、本地端点、未知自定义端点走 `/api/show` |
+| DeepSeek/OpenAI 等已知云端点 | 跳过 Ollama 探测 |
+| `agent.agent_init` | 增加默认关闭的 init timing hook，用于 live smoke 诊断 |
+| `live_interrupt_demo.py` | 真实 smoke 可打印 `agent_init.*` 阶段 |
+
+优化后真实 smoke：
+```text
+python -u scripts\live_interrupt_demo.py --real-model --scenario interrupt --timing
+command wall time: 42.0s
+internal timed total: 26.6s
+```
+
+关键耗时变化：
+| 阶段 | 优化前 | 优化后 |
+|---|---:|---:|
+| `gateway.agent_init.after_context_engine_1` | 4.229s | 0.001s |
+| `gateway.ai_agent_init_1` | 14.660s | 6.905s |
+| `first_dispatch_ready` | 21.131s | 12.117s |
+| `kms_dispatch_2` | 0.103s | 0.112s |
+| `gateway.busy_handler_1` | 0.113s | 0.121s |
+
+当前判断：
+- 打断链路仍然正确：旧 dispatch `failed`，新 dispatch `completed`，旧任务没有写回最终答案。
+- KMS/Kernel 仍不是慢点，第二条消息进入打断路径约 0.12s。
+- 已消除 DeepSeek 场景下不必要的 Ollama 探测，首轮 ready 明显下降。
+- 剩余可优化点在 Hermes/Thinker：OpenAI-compatible client 初始化约 3.4s，工具加载约 3.1s。
