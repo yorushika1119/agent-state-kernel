@@ -3060,3 +3060,28 @@ internal timed total: 40.0s
 - 第一轮到 dispatch ready 约 16.6s，是当前最大段之一。
 - 第二条用户消息触发打断并进入新 dispatch 约 6.6s，还可以继续优化。
 - 新 run 完成约 11.1s，主要受真实模型回答影响。
+
+二次细分计时：
+```text
+python -u scripts\live_interrupt_demo.py --real-model --scenario interrupt --timing
+command wall time: 47.8s
+internal timed total: 36.3s
+```
+
+| 阶段 | 本次耗时 |
+|---|---:|
+| setup_ready | 3.027s |
+| kms_dispatch_1 | 5.761s |
+| first_dispatch_ready | 9.394s |
+| second_delay | 1.516s |
+| kms_dispatch_2 | 6.094s |
+| user2_handled | 0.005s |
+| agent_run_2 | 9.756s |
+| runs_finished | 0.048s |
+| final_views_loaded | 0.021s |
+
+新的判断：
+- 第二条用户消息进入 Gateway 后，真正的本地处理几乎不慢，`user2_handled=0.005s`。
+- 当前打断体验的主要慢点是 `kms_dispatch_2=6.094s`，即 KMS 调度接口调用耗时。
+- 第二轮模型回答 `agent_run_2=9.756s` 属于真实模型生成耗时，暂时不是架构问题。
+- `agent_run_1` 与 `agent_run_2` 有嵌套重叠，不能直接相加；它表示第一轮后台任务从开始到被第二轮接管后的整体生命周期。
