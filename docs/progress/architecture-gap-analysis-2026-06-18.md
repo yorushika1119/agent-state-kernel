@@ -3127,3 +3127,39 @@ command wall time: 75.8s
 - KMS dispatch 侧的重复 LLM normalize 已移除，打断路径的 KMS 调度不再是主要瓶颈。
 - `user2_handled` 仍是毫秒级，说明 Gateway 收到第二条消息后的本地处理很快。
 - 剩余耗时主要来自真实 Hermes agent/model：`first_dispatch_ready` 和 `agent_run_2`。
+
+## 2026-06-24：Hermes 首轮 ready 慢点拆分
+
+继续在真实 Hermes smoke 中拆分 `first_dispatch_ready`，本轮只增加诊断探针，不改变业务链路。
+
+命令：
+```text
+python -u scripts\live_interrupt_demo.py --real-model --scenario interrupt --timing
+command wall time: 50.0s
+internal timed total: 33.8s
+```
+
+关键结果：
+| 阶段 | 本次耗时 | 判断 |
+|---|---:|---|
+| `kms_dispatch_1` | 0.179s | 正常 |
+| `kms_dispatch_2` | 0.114s | 正常 |
+| `gateway.busy_handler_1` | 0.125s | 第二条消息打断处理很快 |
+| `user2_handled` | 0.000s | 本地接收第二条消息无明显阻塞 |
+| `agent_run_2` | 13.168s | 主要是真实模型生成耗时 |
+| `gateway.first_turn.agent_promoted - kms_dispatch_1` | 约 12.0s | 当前首轮 ready 的主要慢点 |
+
+新增诊断点：
+| 诊断点 | 含义 |
+|---|---|
+| `gateway.first_turn.pending_sentinel_seen` | Gateway 已把会话标记为运行中，占位防止并发重复执行 |
+| `gateway.first_turn.dispatch.start_new_task` | KMS 已返回新任务决策 |
+| `gateway.first_turn.dispatch_id_seen` | KMS 已返回 thinker dispatch id |
+| `gateway.first_turn.agent_promoted` | 真实 AIAgent 已挂载到 running agents，可被后续消息打断 |
+| `gateway.busy_handler_1` | 第二条消息进入 busy/interrupt 路径的整体耗时 |
+
+当前判断：
+- KMS/Kernel 架构链路没有新的性能问题。
+- 打断本身已经很快，第二条消息进入 Gateway 后 `busy_handler` 约 0.125s。
+- 首轮 ready 慢点在 Hermes agent 创建/初始化/首次模型侧准备之间，下一步需要继续拆 `agent_promoted` 前的内部阶段。
+- `command wall time` 比 `internal timed total` 多约 16s，原因可能是 Python 进程启动、导入或退出清理等脚本计时外开销；具体原因还不确定。
