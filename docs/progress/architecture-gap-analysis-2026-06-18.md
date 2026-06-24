@@ -3311,3 +3311,37 @@ passed
 1. 继续拆工具 `check_fn` 冷探测：优先看 vision、image、tts、browser 这几类是否应该懒检查或按启用 toolset 检查。
 2. 再看 OpenAI-compatible client 创建能否复用共享 client 或延迟创建。
 3. 保持 KMS/Kernel 不动，因为当前瓶颈已经明确在 Hermes/Thinker 冷启动。
+
+## 2026-06-24：registry check_fn 并行冷检查
+
+本轮继续处理 `registry.get_definitions` 冷启动耗时。
+
+通俗说明：
+- 改哪里：真实 Hermes 目录的 `tools/registry.py` 和 `tests/tools/test_registry.py`。
+- 为什么改：工具可用性检查原来是串行执行，vision/image/browser/tts 等冷探测会一个接一个等。
+- 改完什么样：同一轮 `get_definitions()` 会先收集不同的 `check_fn`，用最多 8 个 worker 并行检查，最后仍按原来的工具名顺序生成 schema。
+
+验证命令：
+
+```text
+cd C:\Users\EDY\AppData\Local\hermes\hermes-agent
+python -m pytest -o addopts='' -q tests\tools\test_registry.py::TestGetDefinitions -q
+passed
+
+python -u scripts\live_interrupt_demo.py --real-model --scenario interrupt --timing
+passed
+```
+
+结果判断：
+
+| 项目 | 结果 |
+|---|---|
+| 打断链路 | 仍正确，旧 dispatch `failed`，新 dispatch `completed` |
+| `kms_dispatch_2` | 约 0.10-0.17s，仍正常 |
+| `registry.get_definitions` | 仍约 1.5s 左右波动 |
+| 16 worker 尝试 | 没有保留，实测波动更大 |
+
+当前结论：
+- 并行 check_fn 有一定收益，但不是根治。
+- 剩余慢点来自具体工具自己的冷探测，例如 vision/image/browser/tts 等。
+- 下一步不应继续盲目加并发，而应该改成“只检查当前启用 toolset”或“工具第一次真正使用时再深度检查”。
