@@ -41,6 +41,8 @@ import aiosqlite
 
 from src.schema.events import CognitiveEvent
 from src.schema.state import (
+    ApprovalRequest,
+    ApprovalRequestStatus,
     ClaimItem,
     BeliefItem,
     BeliefStatus,
@@ -53,6 +55,7 @@ from src.schema.state import (
     IntentState,
     ObserverNotification,
     ObserverNotificationStatus,
+    ObserverTaskView,
     PlanState,
     PlanStatus,
     ProgressState,
@@ -521,6 +524,45 @@ class SqliteStore:
 
         # ─── 22. Task Conversation Refs ───
         await self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS approval_requests (
+                approval_request_id TEXT PRIMARY KEY,
+                kernel_session_id TEXT NOT NULL,
+                task_id TEXT DEFAULT '',
+                requested_action TEXT DEFAULT '',
+                action_summary TEXT DEFAULT '',
+                risk_summary TEXT DEFAULT '',
+                requested_by TEXT DEFAULT 'thinker',
+                task_brief_version INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'pending',
+                decided_by TEXT DEFAULT '',
+                decision_comment TEXT DEFAULT '',
+                decided_at TEXT,
+                metadata TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        """)
+
+        await self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS observer_task_views (
+                view_id TEXT PRIMARY KEY,
+                kernel_session_id TEXT NOT NULL,
+                task_id TEXT DEFAULT '',
+                status TEXT DEFAULT 'idle',
+                stage TEXT DEFAULT '',
+                summary TEXT DEFAULT '',
+                checklist TEXT,
+                needs_user_input INTEGER DEFAULT 0,
+                blocking_reason TEXT,
+                approval_request_ids TEXT,
+                safe_facts TEXT,
+                uncertain_points TEXT,
+                open_todos TEXT,
+                updated_at TEXT
+            )
+        """)
+
+        await self.conn.execute("""
             CREATE TABLE IF NOT EXISTS task_conversation_refs (
                 conversation_ref_id TEXT PRIMARY KEY,
                 user_session_id TEXT DEFAULT '',
@@ -582,6 +624,24 @@ class SqliteStore:
         await self._ensure_column("observer_notifications", "status", "TEXT DEFAULT 'pending'")
         await self._ensure_column("observer_notifications", "acknowledged_at", "TEXT")
         await self._ensure_column("observer_notifications", "resolved_at", "TEXT")
+        await self._ensure_column("approval_requests", "task_id", "TEXT DEFAULT ''")
+        await self._ensure_column("approval_requests", "requested_action", "TEXT DEFAULT ''")
+        await self._ensure_column("approval_requests", "action_summary", "TEXT DEFAULT ''")
+        await self._ensure_column("approval_requests", "risk_summary", "TEXT DEFAULT ''")
+        await self._ensure_column("approval_requests", "requested_by", "TEXT DEFAULT 'thinker'")
+        await self._ensure_column("approval_requests", "task_brief_version", "INTEGER DEFAULT 0")
+        await self._ensure_column("approval_requests", "status", "TEXT DEFAULT 'pending'")
+        await self._ensure_column("approval_requests", "decided_by", "TEXT DEFAULT ''")
+        await self._ensure_column("approval_requests", "decision_comment", "TEXT DEFAULT ''")
+        await self._ensure_column("approval_requests", "decided_at", "TEXT")
+        await self._ensure_column("approval_requests", "metadata", "TEXT")
+        await self._ensure_column("observer_task_views", "checklist", "TEXT")
+        await self._ensure_column("observer_task_views", "needs_user_input", "INTEGER DEFAULT 0")
+        await self._ensure_column("observer_task_views", "blocking_reason", "TEXT")
+        await self._ensure_column("observer_task_views", "approval_request_ids", "TEXT")
+        await self._ensure_column("observer_task_views", "safe_facts", "TEXT")
+        await self._ensure_column("observer_task_views", "uncertain_points", "TEXT")
+        await self._ensure_column("observer_task_views", "open_todos", "TEXT")
 
         await self.conn.commit()
         logger.info("Tables created")
@@ -858,6 +918,7 @@ class SqliteStore:
             "task_snapshots", "global_tasks", "task_brief_states",
             "task_flows", "claim_items", "todo_obligations",
             "thinker_dispatches", "observer_notifications",
+            "approval_requests", "observer_task_views",
             "task_conversation_refs",
             "evidence_items", "execution_actions",
             "sync_cursors", "runtime_refs",
@@ -887,6 +948,8 @@ class SqliteStore:
             "task_flows",
             "claim_items",
             "todo_obligations",
+            "approval_requests",
+            "observer_task_views",
             "evidence_items",
             "execution_actions",
             "sync_cursors",
@@ -1896,6 +1959,140 @@ class SqliteStore:
         await self.save_observer_notification(notification)
         return await self.get_observer_notification(notification_id)
 
+    async def save_approval_request(self, approval: ApprovalRequest) -> None:
+        existing = await self.get_approval_request(approval.approval_request_id)
+        created_at = existing.created_at if existing else approval.created_at
+        await self.conn.execute(
+            """INSERT OR REPLACE INTO approval_requests
+               (approval_request_id, kernel_session_id, task_id, requested_action,
+                action_summary, risk_summary, requested_by, task_brief_version,
+                status, decided_by, decision_comment, decided_at, metadata,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                approval.approval_request_id,
+                approval.kernel_session_id,
+                approval.task_id,
+                approval.requested_action,
+                approval.action_summary,
+                approval.risk_summary,
+                approval.requested_by,
+                approval.task_brief_version,
+                approval.status.value,
+                approval.decided_by,
+                approval.decision_comment,
+                approval.decided_at.isoformat() if approval.decided_at else None,
+                json.dumps(approval.metadata, ensure_ascii=False, default=str),
+                created_at.isoformat() if created_at else utc_now_iso(),
+                utc_now_iso(),
+            ),
+        )
+        await self.conn.commit()
+
+    async def get_approval_request(
+        self,
+        approval_request_id: str,
+    ) -> Optional[ApprovalRequest]:
+        if not approval_request_id:
+            return None
+        rows = await self.conn.execute_fetchall(
+            "SELECT * FROM approval_requests WHERE approval_request_id = ?",
+            (approval_request_id,),
+        )
+        if not rows:
+            return None
+        return self._row_to_approval_request(rows[0])
+
+    async def list_approval_requests(
+        self,
+        *,
+        kernel_session_id: str = "",
+        task_id: str = "",
+        status: str = "",
+        limit: int = 50,
+    ) -> List[ApprovalRequest]:
+        query = "SELECT * FROM approval_requests"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if kernel_session_id:
+            clauses.append("kernel_session_id = ?")
+            params.append(kernel_session_id)
+        if task_id:
+            clauses.append("task_id = ?")
+            params.append(task_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at ASC LIMIT ?"
+        params.append(limit)
+        rows = await self.conn.execute_fetchall(query, params)
+        return [self._row_to_approval_request(row) for row in rows]
+
+    async def update_approval_decision(
+        self,
+        approval_request_id: str,
+        status: ApprovalRequestStatus,
+        *,
+        decided_by: str = "",
+        comment: str = "",
+        task_brief_version: int = 0,
+    ) -> Optional[ApprovalRequest]:
+        approval = await self.get_approval_request(approval_request_id)
+        if not approval:
+            return None
+        approval.status = status
+        approval.decided_by = decided_by
+        approval.decision_comment = comment
+        if task_brief_version:
+            approval.task_brief_version = task_brief_version
+        approval.decided_at = utc_now()
+        await self.save_approval_request(approval)
+        return await self.get_approval_request(approval_request_id)
+
+    async def save_observer_task_view(self, view: ObserverTaskView) -> None:
+        await self.conn.execute(
+            """INSERT OR REPLACE INTO observer_task_views
+               (view_id, kernel_session_id, task_id, status, stage, summary,
+                checklist, needs_user_input, blocking_reason, approval_request_ids,
+                safe_facts, uncertain_points, open_todos, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                view.view_id,
+                view.kernel_session_id,
+                view.task_id,
+                view.status,
+                view.stage,
+                view.summary,
+                json.dumps(view.checklist, ensure_ascii=False, default=str),
+                int(view.needs_user_input),
+                view.blocking_reason,
+                json.dumps(view.approval_request_ids, ensure_ascii=False),
+                json.dumps(view.safe_facts, ensure_ascii=False),
+                json.dumps(view.uncertain_points, ensure_ascii=False),
+                json.dumps(view.open_todos, ensure_ascii=False),
+                utc_now_iso(),
+            ),
+        )
+        await self.conn.commit()
+
+    async def get_observer_task_view(
+        self,
+        kernel_session_id: str,
+        task_id: str = "",
+    ) -> Optional[ObserverTaskView]:
+        query = "SELECT * FROM observer_task_views WHERE kernel_session_id = ?"
+        params: list[Any] = [kernel_session_id]
+        if task_id:
+            query += " AND task_id = ?"
+            params.append(task_id)
+        query += " ORDER BY updated_at DESC LIMIT 1"
+        rows = await self.conn.execute_fetchall(query, params)
+        if not rows:
+            return None
+        return self._row_to_observer_task_view(rows[0])
+
     async def get_evidence(self, session_id: str) -> List[EvidenceItem]:
         """获取所有证据条目。"""
         rows = await self.conn.execute_fetchall(
@@ -2447,5 +2644,42 @@ class SqliteStore:
             acknowledged_at=utc_from_iso(row["acknowledged_at"]) if row["acknowledged_at"] else None,
             resolved_at=utc_from_iso(row["resolved_at"]) if row["resolved_at"] else None,
             created_at=utc_from_iso(row["created_at"]) if row["created_at"] else utc_now(),
+            updated_at=utc_from_iso(row["updated_at"]) if row["updated_at"] else utc_now(),
+        )
+
+    def _row_to_approval_request(self, row) -> ApprovalRequest:
+        return ApprovalRequest(
+            approval_request_id=row["approval_request_id"],
+            kernel_session_id=row["kernel_session_id"] or "",
+            task_id=row["task_id"] or "",
+            requested_action=row["requested_action"] or "",
+            action_summary=row["action_summary"] or "",
+            risk_summary=row["risk_summary"] or "",
+            requested_by=row["requested_by"] or "thinker",
+            task_brief_version=row["task_brief_version"] or 0,
+            status=ApprovalRequestStatus(row["status"] or ApprovalRequestStatus.PENDING.value),
+            decided_by=row["decided_by"] or "",
+            decision_comment=row["decision_comment"] or "",
+            decided_at=utc_from_iso(row["decided_at"]) if row["decided_at"] else None,
+            metadata=json.loads(row["metadata"] or "{}"),
+            created_at=utc_from_iso(row["created_at"]) if row["created_at"] else utc_now(),
+            updated_at=utc_from_iso(row["updated_at"]) if row["updated_at"] else utc_now(),
+        )
+
+    def _row_to_observer_task_view(self, row) -> ObserverTaskView:
+        return ObserverTaskView(
+            view_id=row["view_id"],
+            kernel_session_id=row["kernel_session_id"] or "",
+            task_id=row["task_id"] or "",
+            status=row["status"] or "idle",
+            stage=row["stage"] or "",
+            summary=row["summary"] or "",
+            checklist=json.loads(row["checklist"] or "[]"),
+            needs_user_input=bool(row["needs_user_input"]),
+            blocking_reason=row["blocking_reason"],
+            approval_request_ids=json.loads(row["approval_request_ids"] or "[]"),
+            safe_facts=json.loads(row["safe_facts"] or "[]"),
+            uncertain_points=json.loads(row["uncertain_points"] or "[]"),
+            open_todos=json.loads(row["open_todos"] or "[]"),
             updated_at=utc_from_iso(row["updated_at"]) if row["updated_at"] else utc_now(),
         )

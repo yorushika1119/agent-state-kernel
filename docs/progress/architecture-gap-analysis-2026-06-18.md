@@ -3345,3 +3345,45 @@ passed
 - 并行 check_fn 有一定收益，但不是根治。
 - 剩余慢点来自具体工具自己的冷探测，例如 vision/image/browser/tts 等。
 - 下一步不应继续盲目加并发，而应该改成“只检查当前启用 toolset”或“工具第一次真正使用时再深度检查”。
+
+## 2026-06-25：Kernel P0 差距收敛
+
+本轮回到 Kernel 本体，按 `Runtime-side Agent State Kernel 功能设计（6.24）.md` 先补必须闭环。重点不是继续拆 KMS，也不是做主动汇报高级策略，而是把文档要求的 approval lifecycle 和 observer-facing task view 落到事件、状态表、API、视图和测试。
+
+已补齐的差距：
+
+| 原差距 | 当前状态 |
+|---|---|
+| approval request lifecycle 缺失 | 已补：事件、`approval_requests` 表、reducer、store、API、测试 |
+| observer-facing task view 缺少持久化投影 | 已补：`observer_task_views` 表，`observer_view` 生成时刷新投影 |
+| manager / thinker / observer 对审批状态不可见 | 已补：三类 view 均追加 `approvals` / `pending_approvals` |
+| 待审批无法表达为用户输入阻塞 | 已补：pending approval 会令 observer / manager 显示 `awaiting_approval` |
+| new-table-only 场景测试债 | 已补：fake classifier 兼容 `enable_llm` 参数，new-table-only 回归通过 |
+
+新增 API：
+
+```text
+GET  /kms/tasks/{task_id}/approvals
+GET  /kms/approvals/{approval_request_id}
+POST /kms/approvals/{approval_request_id}/grant
+POST /kms/approvals/{approval_request_id}/deny
+POST /kms/approvals/{approval_request_id}/revoke
+```
+
+验证结果：
+
+```text
+python -m pytest tests\test_approval_and_observer_task_views.py -q -p no:cacheprovider
+2 passed
+
+python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-new-table-only -p no:cacheprovider
+111 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-core -p no:cacheprovider
+86 passed
+```
+
+当前结论：
+- Kernel P0 的 approval 和 observer task view 差距已经收敛到可用闭环。
+- `task_session_links` 仍未实现，但当前判断不是 P0；它更适合在多 runtime/user session 绑定需求明确后再补。
+- 主动汇报高级策略仍属于 KMS/Notification 后续工作，不应塞回 Kernel。

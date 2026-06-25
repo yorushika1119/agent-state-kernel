@@ -29,7 +29,7 @@ from src.kms.notification.coordinator import NotificationCoordinator
 from src.kms.audit.state_source import StateSourceAudit
 from src.kernel.engine import KernelEngine
 from src.stores.sqlite_store import SqliteStore
-from src.schema.events import EventSubmission
+from src.schema.events import EventSubmission, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +128,12 @@ class AskCanSayRequest(BaseModel):
     """Gate 发言检查请求。"""
     session_id: str
     proposed_message: str
+
+
+class DecideApprovalRequest(BaseModel):
+    decided_by: str = ""
+    comment: str = ""
+    task_brief_version: int = 0
 
 
 # ── 应用工厂 ──
@@ -662,6 +668,89 @@ async def _resolve_notification(notification_id: str):
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
     return notification.model_dump()
+
+
+async def _decide_approval_request(
+    approval_request_id: str,
+    event_type: EventType,
+    req: DecideApprovalRequest,
+):
+    engine = get_engine()
+    approval = await engine.store.get_approval_request(approval_request_id)
+    if not approval:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+    await engine.append_kernel_event(
+        approval.kernel_session_id,
+        event_type,
+        payload={
+            "approval_request_id": approval_request_id,
+            "decided_by": req.decided_by,
+            "comment": req.comment,
+            "task_brief_version": req.task_brief_version,
+        },
+    )
+    updated = await engine.store.get_approval_request(approval_request_id)
+    return updated.model_dump() if updated else None
+
+
+@app.get("/kms/tasks/{task_id}/approvals")
+async def list_task_approvals(
+    task_id: str,
+    status: str = "",
+    limit: int = 50,
+):
+    engine = get_engine()
+    approvals = await engine.store.list_approval_requests(
+        task_id=task_id,
+        status=status,
+        limit=limit,
+    )
+    return [approval.model_dump() for approval in approvals]
+
+
+@app.get("/kms/approvals/{approval_request_id}")
+async def get_approval(approval_request_id: str):
+    engine = get_engine()
+    approval = await engine.store.get_approval_request(approval_request_id)
+    if not approval:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+    return approval.model_dump()
+
+
+@app.post("/kms/approvals/{approval_request_id}/grant")
+async def grant_approval(
+    approval_request_id: str,
+    req: DecideApprovalRequest = DecideApprovalRequest(),
+):
+    return await _decide_approval_request(
+        approval_request_id,
+        EventType.APPROVAL_GRANTED,
+        req,
+    )
+
+
+@app.post("/kms/approvals/{approval_request_id}/deny")
+async def deny_approval(
+    approval_request_id: str,
+    req: DecideApprovalRequest = DecideApprovalRequest(),
+):
+    return await _decide_approval_request(
+        approval_request_id,
+        EventType.APPROVAL_DENIED,
+        req,
+    )
+
+
+@app.post("/kms/approvals/{approval_request_id}/revoke")
+async def revoke_approval(
+    approval_request_id: str,
+    req: DecideApprovalRequest = DecideApprovalRequest(),
+):
+    return await _decide_approval_request(
+        approval_request_id,
+        EventType.APPROVAL_REVOKED,
+        req,
+    )
 
 
 @app.get("/kms/observer/notifications")

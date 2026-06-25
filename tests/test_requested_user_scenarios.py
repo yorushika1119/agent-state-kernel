@@ -384,7 +384,14 @@ async def test_manager_uses_llm_intent_suggestion_without_letting_it_execute_dir
             agent_id="agent-user-scenario",
         )
 
-        async def fake_classifier(text, *, mode="auto", session=None, context=None):
+        async def fake_classifier(
+            text,
+            *,
+            mode="auto",
+            session=None,
+            context=None,
+            enable_llm=True,
+        ):
             assert session is not None
             assert context is not None
             assert context.has_session
@@ -487,7 +494,14 @@ async def test_manager_passes_loaded_kernel_context_to_classifier(monkeypatch):
 
         captured = {}
 
-        async def fake_classifier(text, *, mode="auto", session=None, context=None):
+        async def fake_classifier(
+            text,
+            *,
+            mode="auto",
+            session=None,
+            context=None,
+            enable_llm=True,
+        ):
             captured["context"] = context
             return DispatchIntent(
                 intent="kernel_answerable_query",

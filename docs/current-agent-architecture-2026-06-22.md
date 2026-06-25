@@ -1113,3 +1113,49 @@ python scripts\migrate_legacy_state_tables.py data\kernel.db --removal-check
 - 真实库当前没有 fallback 命中。
 - removal-check 认为可以移除旧状态表。
 - 但本轮仍未执行 `--drop-legacy-tables`，因为真实库删表属于最后收尾动作，建议先备份再做。
+
+## 50. 2026-06-25 Approval 与 Observer Task View 当前架构位置
+
+本轮没有改变分层：KMS 仍负责调度和决策入口，Kernel 负责事件、派生状态和可见视图。新增内容都放在 Kernel 状态闭环里，避免让 KMS 直接维护状态表。
+
+新增事件：
+
+| EventType | 用途 |
+|---|---|
+| `ApprovalRequested` | Thinker/KMS 需要用户批准敏感动作或外部副作用时写入 |
+| `ApprovalGranted` | 用户或管理侧批准 |
+| `ApprovalDenied` | 用户或管理侧拒绝 |
+| `ApprovalRevoked` | 已批准内容被撤销 |
+
+新增状态表：
+
+| 表 | 用途 |
+|---|---|
+| `approval_requests` | 保存审批请求、审批状态、决策人、评论、task_brief_version 和 metadata |
+| `observer_task_views` | 保存 observer-facing task 投影：摘要、阶段、清单、待审批、阻塞原因、安全事实、待办 |
+
+新增 API：
+
+```text
+GET  /kms/tasks/{task_id}/approvals
+GET  /kms/approvals/{approval_request_id}
+POST /kms/approvals/{approval_request_id}/grant
+POST /kms/approvals/{approval_request_id}/deny
+POST /kms/approvals/{approval_request_id}/revoke
+```
+
+视图变化：
+
+| View | 新增内容 |
+|---|---|
+| `observer_view` | `pending_approvals`、`observer_task_view`，待审批会令 `needs_user_input=true` |
+| `manager_view` | `approvals`、`pending_approvals` |
+| `thinker_view` | `approvals`、`pending_approvals`，便于 Thinker 知道动作是否已获批 |
+| `debug_view` | `approvals`、`observer_task_view` |
+
+边界说明：
+
+- approval 状态由事件派生，API 的 grant/deny/revoke 也通过 `append_kernel_event()` 写事件，不直接改表。
+- `observer_task_views` 是 Kernel 面向 Observer/UI 的持久化投影，不是新的调度器。
+- 主动汇报的高级策略、push broker、用户打扰策略仍属于 KMS/Notification 后续工作，不在本轮 Kernel P0 内。
+- `task_session_links` 暂未实现；当前判断它更偏多 runtime/session 绑定增强，不阻塞 approval 与 observer view 的最小闭环。

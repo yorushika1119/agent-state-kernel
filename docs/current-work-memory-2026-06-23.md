@@ -287,6 +287,40 @@ python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-gateway-he
 python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-gateway-helper-new-table-only -p no:cacheprovider
 111 passed
 
+## 13. 2026-06-25 Approval Lifecycle 与 Observer Task View 收口
+
+本轮按 `Runtime-side Agent State Kernel 功能设计（6.24）.md` 先补 Kernel P0，不包含同事负责的主动汇报高级策略，也暂不做 `task_session_links`。
+
+已完成：
+
+| 事项 | 当前结果 |
+|---|---|
+| approval lifecycle | 新增 `ApprovalRequested / ApprovalGranted / ApprovalDenied / ApprovalRevoked` 事件 |
+| approval 状态表 | 新增 `approval_requests`，由 reducer 从事件派生 |
+| approval API | 新增 `GET /kms/tasks/{task_id}/approvals`、`GET /kms/approvals/{approval_request_id}`、`POST /grant`、`POST /deny`、`POST /revoke` |
+| observer-facing task view | 新增 `observer_task_views`，`get_observer_view()` 会刷新持久化投影 |
+| views 接入 | thinker / observer / manager / debug 视图均能读取 approval 信息 |
+| pending approval 阻塞表达 | observer / manager view 会把待审批标为 `needs_user_input`，阻塞原因为 `awaiting_approval` |
+| new-table-only 测试债 | 修复 `test_requested_user_scenarios.py` 中 fake classifier 缺少 `enable_llm` 参数的问题 |
+
+验证记录：
+
+```text
+python -m pytest tests\test_approval_and_observer_task_views.py -q -p no:cacheprovider
+2 passed
+
+python scripts\test_new_table_only.py --basetemp .tmp\pytest-agent-state-kernel-new-table-only -p no:cacheprovider
+111 passed
+
+python scripts\test_core.py --basetemp .tmp\pytest-agent-state-kernel-core -p no:cacheprovider
+86 passed
+```
+
+当前判断：
+
+- Kernel 侧 P0 已补齐到可用闭环：审批请求、审批决策、状态派生、API、observer 投影和测试均已落地。
+- `task_session_links` 仍未实现，暂定不是 P0；后续如果要更强地表达一个 task 对多个 runtime/user session 的绑定，再补。
+- 主动汇报目前仍主要由 `NotificationCoordinator` 覆盖完成/失败类通知；更细的主动汇报策略、push broker、用户打扰策略由后续任务继续推进。
 KERNEL_CREATE_LEGACY_STATE_TABLES=0 python scripts\live_tool_interrupt_smoke.py
 passed
 ```

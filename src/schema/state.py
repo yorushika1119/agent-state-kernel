@@ -398,6 +398,52 @@ class ObserverNotification(BaseModel):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class ApprovalRequestStatus(StrEnum):
+    PENDING = "pending"
+    GRANTED = "granted"
+    DENIED = "denied"
+    REVOKED = "revoked"
+
+
+class ApprovalRequest(BaseModel):
+    """User approval request for a sensitive or externally visible action."""
+
+    approval_request_id: str
+    kernel_session_id: str
+    task_id: str = ""
+    requested_action: str = ""
+    action_summary: str = ""
+    risk_summary: str = ""
+    requested_by: str = "thinker"
+    task_brief_version: int = 0
+    status: ApprovalRequestStatus = ApprovalRequestStatus.PENDING
+    decided_by: str = ""
+    decision_comment: str = ""
+    decided_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ObserverTaskView(BaseModel):
+    """Persisted observer-facing task projection."""
+
+    view_id: str
+    kernel_session_id: str
+    task_id: str = ""
+    status: str = "idle"
+    stage: str = ""
+    summary: str = ""
+    checklist: List[Dict[str, Any]] = Field(default_factory=list)
+    needs_user_input: bool = False
+    blocking_reason: Optional[str] = None
+    approval_request_ids: List[str] = Field(default_factory=list)
+    safe_facts: List[str] = Field(default_factory=list)
+    uncertain_points: List[str] = Field(default_factory=list)
+    open_todos: List[str] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 # ---------------------------------------------------------------------------
 # Commitment
 # ---------------------------------------------------------------------------
