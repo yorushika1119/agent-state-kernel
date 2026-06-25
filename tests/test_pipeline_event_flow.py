@@ -1164,3 +1164,95 @@ async def test_complete_run_clears_only_matching_active_run():
         assert thinker_view["cancellation"]["active_run_id"] == ""
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_fires_task_blocked_notification():
+    """任务某步 TaskFailed → task_flow 进入 blocked → 主动弹 task_blocked 通知。"""
+    store, engine = await build_engine()
+    try:
+        session = await engine.create_session(agent_id="agent-a")
+        sid = session.kernel_session_id
+
+        await engine.submit_event(
+            EventSubmission(
+                session_id=sid,
+                component="talker",
+                request_type="REGISTER_USER_INTENT_UPDATE",
+                payload={"goal": "research and report"},
+            )
+        )
+        await engine.submit_event(
+            EventSubmission(
+                session_id=sid,
+                component="thinker",
+                request_type="PlanProposed",
+                intent_version=1,
+                payload={
+                    "plan_id": "plan_block",
+                    "plan": {"steps": [{"step_id": "s1", "name": "search"}]},
+                },
+            )
+        )
+        await engine.submit_event(
+            EventSubmission(
+                session_id=sid,
+                component="thinker",
+                request_type="TaskFailed",
+                intent_version=1,
+                payload={"step_id": "s1", "error": "tool timed out"},
+            )
+        )
+
+        # 先确认状态确实进了 blocked（这是评估器触发的前提）
+        task_flow = await store.get_task_flow(sid)
+        assert task_flow is not None and task_flow.status == PlanStatus.BLOCKED
+
+        notifs = await store.list_observer_notifications(kernel_session_id=sid, status="")
+        types = [n.notification_type for n in notifs]
+        assert "task_blocked" in types
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_fires_needs_user_input_notification():
+    """有"没核实的判断"但没有任何可信事实 → 主动弹 needs_user_input 通知。"""
+    store, engine = await build_engine()
+    try:
+        session = await engine.create_session(agent_id="agent-a")
+        sid = session.kernel_session_id
+
+        await engine.submit_event(
+            EventSubmission(
+                session_id=sid,
+                component="talker",
+                request_type="REGISTER_USER_INTENT_UPDATE",
+                payload={"goal": "research"},
+            )
+        )
+        # unverified + 低置信 → 进 unsafe_claims，且没有任何 safe_facts → needs_user_input
+        await engine.submit_event(
+            EventSubmission(
+                session_id=sid,
+                component="thinker",
+                request_type="BeliefProposed",
+                intent_version=1,
+                payload={
+                    "belief_id": "b_unsure",
+                    "claim": "还不能确定的初步判断",
+                    "status": "unverified",
+                    "confidence": 0.3,
+                },
+            )
+        )
+
+        # 先确认状态确实进了 needs_user_input
+        progress = await store.get_progress(sid)
+        assert progress is not None and progress.needs_user_input is True
+
+        notifs = await store.list_observer_notifications(kernel_session_id=sid, status="")
+        types = [n.notification_type for n in notifs]
+        assert "needs_user_input" in types
+    finally:
+        await store.close()

@@ -12,7 +12,9 @@ KERNEL_URL = "http://127.0.0.1:8420"
 
 
 async def scenario():
-    async with httpx.AsyncClient(timeout=30) as client:
+    # trust_env=False：忽略 shell 的 http_proxy/all_proxy 等环境变量，
+    # 否则发往 127.0.0.1 的本地请求会被代理拦截、返回空 body 导致 r.json() 崩。
+    async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
         # ---- Phase 1: Start session ----
         print("=" * 60)
         print("PHASE 1: Create session")
@@ -230,19 +232,22 @@ async def scenario():
         print("=" * 60)
         print("PHASE 6: Check derived views")
 
-        # Thinker view
+        # Thinker view（task-first 字段名；统一用 .get() 防止字段改名导致崩溃）
         r = await client.get(f"{KERNEL_URL}/kms/sessions/{sid}/views/thinker")
         thinker = r.json()
         print("\n--- THINKER VIEW ---")
-        print(f"  Intent: {thinker['intent']['goal']}")
-        print(f"  Plan steps: {[(s['step_id'], s['name'], s['status']) for s in thinker['plan']['steps']]}")
-        print(f"  Evidence: {len(thinker['evidence'])} items")
-        for ev in thinker["evidence"]:
-            print(f"    {ev['evidence_id']}: {ev['title']} (可靠性: {ev['reliability']})")
-        print(f"  Beliefs: {len(thinker['beliefs'])} items")
-        for b in thinker["beliefs"]:
-            print(f"    {b['belief_id']}: \"{b['claim']}\" — {b['status']} (置信度: {b['confidence']})")
-        print(f"  Executions: {len(thinker['executions'])} actions")
+        task_brief = thinker.get("task_brief") or thinker.get("intent") or {}
+        print(f"  Goal: {task_brief.get('goal')}")
+        evidence = thinker.get("evidence", [])
+        print(f"  Evidence: {len(evidence)} items")
+        for ev in evidence:
+            print(f"    {ev.get('evidence_id')}: {ev.get('title')} (可靠性: {ev.get('reliability')})")
+        claims = thinker.get("claims") or thinker.get("beliefs") or []
+        print(f"  Claims: {len(claims)} items")
+        for c in claims:
+            cid = c.get("claim_id") or c.get("belief_id")
+            print(f"    {cid}: \"{c.get('claim')}\" — {c.get('status')} (置信度: {c.get('confidence')})")
+        print(f"  Executions: {len(thinker.get('executions', []))} actions")
 
         # Progress (Talker) view
         r = await client.get(f"{KERNEL_URL}/kms/sessions/{sid}/views/talker")
@@ -271,6 +276,23 @@ async def scenario():
         for ev in events:
             print(f"  [{ev['state_version']}] {ev['event_type']} (by {ev['actor']})")
 
+        # ---- Phase 6.5: 主动通知（本轮新增能力，重点看这里） ----
+        print("\n" + "=" * 60)
+        print("PHASE 6.5: 主动通知 (Observer Notifications)")
+        r = await client.get(
+            f"{KERNEL_URL}/kms/observer/notifications",
+            params={"kernel_session_id": sid, "status": ""},
+        )
+        notifs = r.json()
+        print(f"  共 {len(notifs)} 条通知:")
+        for n in notifs:
+            ctx = n.get("suggested_observer_context", {})
+            print(f"\n  ● 类型: {n.get('notification_type')} | 紧急度: {n.get('urgency')}")
+            print(f"    原因: {n.get('reason')}")
+            print(f"    一句话: {ctx.get('one_line_summary')}")
+            print(f"    可说(safe_facts): {ctx.get('safe_facts')}")
+            print(f"    别说(uncertain_points): {ctx.get('uncertain_points')}")
+
         # ---- Phase 7: ASK_CAN_SAY tests ----
         print("\n" + "=" * 60)
         print("PHASE 7: Visibility Gate tests")
@@ -285,7 +307,7 @@ async def scenario():
         )
         result = r.json()
         print(f"\n  '已找到 A 公司相关融资信息，正在验证中'")
-        print(f"    Allowed: {result['allowed']}")
+        print(f"    Allowed: {result.get('allowed')}")
 
         # Test 2: Premature completion claim
         r = await client.post(
@@ -297,7 +319,7 @@ async def scenario():
         )
         result = r.json()
         print(f"\n  '研究已完成，邮件草稿已生成'")
-        print(f"    Allowed: {result['allowed']}")
+        print(f"    Allowed: {result.get('allowed')}")
         print(f"    Reason: {result.get('reason', 'N/A')}")
         print(f"    Safe alternative: {result.get('safe_alternative', 'N/A')}")
 
@@ -311,7 +333,7 @@ async def scenario():
         )
         result = r.json()
         print(f"\n  '融资金额为 3000 万美元'")
-        print(f"    Allowed: {result['allowed']}")
+        print(f"    Allowed: {result.get('allowed')}")
         print(f"    Reason: {result.get('reason', 'N/A')}")
 
         print("\n" + "=" * 60)
