@@ -6,7 +6,7 @@ import logging
 from typing import Any, Dict, Optional, Tuple
 
 from src.schema.events import Actor, CognitiveEvent, EventSubmission, EventType, Visibility
-from src.schema.state import ProgressState, SyncView, TaskStatus
+from src.schema.state import ObserverTaskView, ProgressState, SyncView, TaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +276,29 @@ class KernelEngine:
                 return step if isinstance(step, dict) else step.model_dump()
         return None
 
+    def _build_observer_checklist(self, task_flow) -> list[dict[str, Any]]:
+        if not task_flow:
+            return []
+        checklist: list[dict[str, Any]] = []
+        for step in task_flow.steps:
+            if isinstance(step, dict):
+                checklist.append(
+                    {
+                        "step_id": step.get("step_id", ""),
+                        "label": step.get("name", ""),
+                        "status": step.get("status", "pending"),
+                    }
+                )
+            else:
+                checklist.append(
+                    {
+                        "step_id": getattr(step, "step_id", ""),
+                        "label": getattr(step, "name", ""),
+                        "status": getattr(step, "status", "pending"),
+                    }
+                )
+        return checklist
+
     async def _ensure_progress(self, session_id: str) -> Optional[ProgressState]:
         progress = await self.store.get_progress(session_id)
         if progress:
@@ -299,6 +322,8 @@ class KernelEngine:
                 kernel_session_id=session_id
             ),
             "runtime_references": await self.store.get_runtime_references(session_id),
+            "approvals": await self.store.list_approval_requests(kernel_session_id=session_id),
+            "observer_task_view": await self.store.get_observer_task_view(session_id),
         }
 
     async def get_thinker_view(self, session_id: str) -> Dict[str, Any]:
@@ -314,6 +339,7 @@ class KernelEngine:
         todos = state["todos"]
         thinker_dispatches = state["thinker_dispatches"]
         runtime_references = state["runtime_references"]
+        approvals = state["approvals"]
 
         if progress is None:
             from src.kms.pipeline import refresh_progress
@@ -394,6 +420,12 @@ class KernelEngine:
             ],
             "todos": [todo.model_dump() for todo in todos],
             "thinker_dispatches": [dispatch.model_dump() for dispatch in thinker_dispatches],
+            "approvals": [approval.model_dump() for approval in approvals],
+            "pending_approvals": [
+                approval.model_dump()
+                for approval in approvals
+                if approval.status.value == "pending"
+            ],
             "runtime_references": [
                 {
                     "kernel_ref_id": ref.kernel_ref_id,
@@ -425,6 +457,7 @@ class KernelEngine:
         task_brief = state["task_brief"]
         todos = state["todos"]
         executions = state["executions"]
+        approvals = state["approvals"]
         notifications = await self.store.list_observer_notifications(
             target="observer",
             kernel_session_id=session_id,
@@ -436,6 +469,9 @@ class KernelEngine:
             limit=8,
         )
         dispatches = state["thinker_dispatches"]
+        pending_approvals = [
+            approval for approval in approvals if approval.status.value == "pending"
+        ]
 
         pending_confirmations = [
             todo.statement
@@ -449,6 +485,8 @@ class KernelEngine:
             todos,
             session,
         )
+        if pending_approvals:
+            blocking_reason = blocking_reason or "awaiting_approval"
         open_todos = [
             todo.statement or todo.obligation_id
             for todo in todos
@@ -457,18 +495,41 @@ class KernelEngine:
         status = progress.status if progress else session.status.value
         if session.status.value in {"completed", "failed", "cancelled", "paused"}:
             status = session.status.value
+        stage = (
+            progress.stage
+            if progress and progress.stage
+            else active_task.current_step_name
+            if active_task
+            else ""
+        )
+        view = ObserverTaskView(
+            view_id=f"{session_id}:{session.active_task_id or 'session'}",
+            kernel_session_id=session_id,
+            task_id=session.active_task_id,
+            status=status,
+            stage=stage,
+            summary=progress.summary if progress else "",
+            checklist=self._build_observer_checklist(state["task_flow"]),
+            needs_user_input=bool(
+                (progress.needs_user_input if progress else False)
+                or pending_confirmations
+                or pending_approvals
+            ),
+            blocking_reason=blocking_reason,
+            approval_request_ids=[
+                approval.approval_request_id for approval in pending_approvals
+            ],
+            safe_facts=progress.safe_facts if progress else [],
+            uncertain_points=progress.unsafe_claims if progress else [],
+            open_todos=open_todos,
+        )
+        await self.store.save_observer_task_view(view)
 
         return {
             "session_id": session_id,
             "task_id": session.active_task_id,
             "status": status,
-            "stage": (
-                progress.stage
-                if progress and progress.stage
-                else active_task.current_step_name
-                if active_task
-                else ""
-            ),
+            "stage": stage,
             "one_line_summary": progress.summary if progress else "",
             "summary_for_observer": progress.summary if progress else "",
             "current_focus": active_task.current_step_name if active_task else "",
@@ -487,10 +548,21 @@ class KernelEngine:
             "needs_user_input": bool(
                 (progress.needs_user_input if progress else False)
                 or pending_confirmations
+                or pending_approvals
             ),
-            "user_question": pending_confirmations[0] if pending_confirmations else None,
+            "user_question": (
+                pending_confirmations[0]
+                if pending_confirmations
+                else pending_approvals[0].action_summary
+                if pending_approvals
+                else None
+            ),
             "allowed_observer_actions": progress.allowed_actions if progress else [],
             "forbidden_observer_actions": progress.forbidden_actions if progress else [],
+            "pending_approvals": [
+                approval.model_dump() for approval in pending_approvals
+            ],
+            "observer_task_view": view.model_dump(),
             "notifications": [notification.model_dump() for notification in notifications],
         }
 
@@ -507,6 +579,7 @@ class KernelEngine:
         claims = state["claims"]
         executions = state["executions"]
         todos = state["todos"]
+        approvals = state["approvals"]
         dispatches = state["thinker_dispatches"]
         active_task = await self.store.get_task(
             session_id,
@@ -527,6 +600,9 @@ class KernelEngine:
             for todo in todos
             if todo.requires_confirmation and todo.status.value == "pending"
         ]
+        pending_approvals = [
+            approval for approval in approvals if approval.status.value == "pending"
+        ]
         blocking_reason = self._build_blocking_reason(
             task_brief,
             progress,
@@ -534,6 +610,8 @@ class KernelEngine:
             todos,
             session,
         )
+        if pending_approvals:
+            blocking_reason = blocking_reason or "awaiting_approval"
         summary = progress.summary if progress else ""
         if session.status.value == "completed":
             summary_for_manager = "任务已完成。"
@@ -562,6 +640,10 @@ class KernelEngine:
             },
             "blocking_reason": blocking_reason,
             "pending_confirmations": pending_confirmations,
+            "pending_approvals": [
+                approval.model_dump() for approval in pending_approvals
+            ],
+            "approvals": [approval.model_dump() for approval in approvals],
             "recent_conversation_refs": [
                 ref.model_dump() for ref in conversation_refs
             ],
@@ -601,6 +683,12 @@ class KernelEngine:
             "todos": [todo.model_dump() for todo in state["todos"]],
             "thinker_dispatches": [dispatch.model_dump() for dispatch in state["thinker_dispatches"]],
             "runtime_references": [ref.model_dump() for ref in state["runtime_references"]],
+            "approvals": [approval.model_dump() for approval in state["approvals"]],
+            "observer_task_view": (
+                state["observer_task_view"].model_dump()
+                if state["observer_task_view"]
+                else None
+            ),
             "legacy_debug": self._build_legacy_debug(
                 await self._get_legacy_debug_state(session_id)
             ),

@@ -50,6 +50,10 @@ class EventType(StrEnum):
     ACTION_BLOCKED = "ActionBlocked"
     VERIFICATION_RESULT = "VerificationResult"
     COMPLETION_CHECK = "CompletionCheck"
+    APPROVAL_REQUESTED = "ApprovalRequested"
+    APPROVAL_GRANTED = "ApprovalGranted"
+    APPROVAL_DENIED = "ApprovalDenied"
+    APPROVAL_REVOKED = "ApprovalRevoked"
 
 
 class Visibility(StrEnum):

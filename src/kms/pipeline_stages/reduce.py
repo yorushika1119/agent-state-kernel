@@ -21,7 +21,7 @@ from src.kms.state.aliases import (
     plan_from_task_flow,
 )
 from src.schema.events import CognitiveEvent, EventType
-from src.schema.state import BeliefStatus
+from src.schema.state import ApprovalRequest, ApprovalRequestStatus, BeliefStatus
 
 logger = logging.getLogger(__name__)
 
@@ -144,3 +144,39 @@ async def reduce(
             if commitment.commitment_id == commitment_id:
                 await store.save_commitment(session_id, commitment)
                 break
+
+    if et == EventType.APPROVAL_REQUESTED:
+        approval_request_id = (
+            payload.get("approval_request_id")
+            or payload.get("approval_id")
+            or f"apr_{event.event_id[-12:]}"
+        )
+        approval = ApprovalRequest(
+            approval_request_id=approval_request_id,
+            kernel_session_id=session_id,
+            task_id=payload.get("task_id", ""),
+            requested_action=payload.get("requested_action", ""),
+            action_summary=payload.get("action_summary", ""),
+            risk_summary=payload.get("risk_summary", ""),
+            requested_by=payload.get("requested_by", event.source_component or event.actor.value),
+            task_brief_version=payload.get("task_brief_version", 0),
+            metadata=payload.get("metadata", {}),
+        )
+        await store.save_approval_request(approval)
+    elif et in (
+        EventType.APPROVAL_GRANTED,
+        EventType.APPROVAL_DENIED,
+        EventType.APPROVAL_REVOKED,
+    ):
+        status_by_event = {
+            EventType.APPROVAL_GRANTED: ApprovalRequestStatus.GRANTED,
+            EventType.APPROVAL_DENIED: ApprovalRequestStatus.DENIED,
+            EventType.APPROVAL_REVOKED: ApprovalRequestStatus.REVOKED,
+        }
+        await store.update_approval_decision(
+            payload.get("approval_request_id", ""),
+            status_by_event[et],
+            decided_by=payload.get("decided_by", ""),
+            comment=payload.get("comment", ""),
+            task_brief_version=payload.get("task_brief_version", 0),
+        )
