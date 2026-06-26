@@ -50,6 +50,27 @@ class KernelEngine:
             state_version=event.state_version,
         )
         await refresh_progress(self.store, session_id)
+
+        # 批准相关事件 → 维护 approval_required 通知（只是输出，绝不打断事件写入）。
+        try:
+            from src.kms.notification.coordinator import NotificationCoordinator
+
+            p = event.payload or {}
+            coordinator = NotificationCoordinator(self.store)
+            if event_type == EventType.APPROVAL_REQUESTED:
+                # 出现"待批准" → 主动弹通知（以批准表那条记录为准，见 notify_approval_from_event）
+                await coordinator.notify_approval_from_event(session_id, event)
+            elif event_type in (
+                EventType.APPROVAL_GRANTED,
+                EventType.APPROVAL_DENIED,
+                EventType.APPROVAL_REVOKED,
+            ):
+                # 用户已批准/拒绝/撤销 → 把那条"待批准"通知收掉，别一直挂着
+                await coordinator.resolve_approval_notification(
+                    session_id, p.get("approval_request_id", "") or ""
+                )
+        except Exception:  # noqa: BLE001
+            pass
         return event
 
     async def create_session(

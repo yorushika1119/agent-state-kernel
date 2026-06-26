@@ -1256,3 +1256,154 @@ async def test_pipeline_fires_needs_user_input_notification():
         assert "needs_user_input" in types
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_approval_request_fires_approval_required_notification():
+    """出现待批准动作(ApprovalRequested) → 主动弹 approval_required 通知，带动作说明。"""
+    store, engine = await build_engine()
+    try:
+        session = await engine.create_session(agent_id="agent-a")
+        sid = session.kernel_session_id
+
+        await engine.append_kernel_event(
+            sid,
+            EventType.APPROVAL_REQUESTED,
+            payload={
+                "approval_request_id": "apr_1",
+                "task_id": "task_apr",
+                "requested_action": "send_external_message",
+                "action_summary": "把邮件发给 boss@example.com",
+            },
+        )
+
+        notifs = await store.list_observer_notifications(kernel_session_id=sid, status="")
+        approval_notifs = [n for n in notifs if n.notification_type == "approval_required"]
+        assert len(approval_notifs) == 1
+        ctx = approval_notifs[0].suggested_observer_context
+        assert ctx["action_summary"] == "把邮件发给 boss@example.com"
+        assert ctx["approval_request_id"] == "apr_1"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_approval_grant_resolves_the_approval_notification():
+    """用户批准后，那条 approval_required 通知应被 resolve、不再 pending（治"批准后通知一直挂着"）。"""
+    store, engine = await build_engine()
+    try:
+        session = await engine.create_session(agent_id="a")
+        sid = session.kernel_session_id
+
+        await engine.append_kernel_event(
+            sid,
+            EventType.APPROVAL_REQUESTED,
+            payload={
+                "approval_request_id": "apr_x",
+                "task_id": "t1",
+                "action_summary": "把邮件发出去",
+            },
+        )
+        # 弹出后应是 pending
+        pending = await store.list_observer_notifications(kernel_session_id=sid, status="pending")
+        assert any(n.notification_type == "approval_required" for n in pending)
+
+        # 用户批准 → 那条通知应被收掉
+        await engine.append_kernel_event(
+            sid,
+            EventType.APPROVAL_GRANTED,
+            payload={"approval_request_id": "apr_x", "decided_by": "u1"},
+        )
+        pending_after = await store.list_observer_notifications(
+            kernel_session_id=sid, status="pending"
+        )
+        assert not any(n.notification_type == "approval_required" for n in pending_after)
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_path_also_catches_approval():
+    """B（防御）：批准若走 pipeline 路径(evaluate_pipeline_event)，也能弹 approval_required 通知。"""
+    from src.kms.notification.coordinator import NotificationCoordinator
+
+    store, engine = await build_engine()
+    try:
+        session = await engine.create_session(agent_id="a")
+        sid = session.kernel_session_id
+        ev = CognitiveEvent(
+            kernel_session_id=sid,
+            event_type=EventType.APPROVAL_REQUESTED,
+            actor=Actor.KERNEL_MANAGER,
+            payload={"approval_request_id": "apr_pipe", "action_summary": "走管线的批准"},
+        )
+        created = await NotificationCoordinator(store).evaluate_pipeline_event(sid, ev, [])
+        assert any(n.notification_type == "approval_required" for n in created)
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_approval_without_id_uses_canonical_id_and_can_be_resolved():
+    """Bug#1（对抗）：发起批准不带 approval_request_id 时——
+    通知必须用 reduce 兜底生成的"真 id"（非空），且后续 grant 能凭那个真 id 把通知收掉（不永久挂 pending）。"""
+    store, engine = await build_engine()
+    try:
+        session = await engine.create_session(agent_id="a")
+        sid = session.kernel_session_id
+
+        # 故意不带 approval_request_id
+        await engine.append_kernel_event(
+            sid,
+            EventType.APPROVAL_REQUESTED,
+            payload={"action_summary": "把邮件发出去"},
+        )
+
+        # reduce 兜底给批准表那条记录编了个真 id
+        approvals = await store.list_approval_requests(kernel_session_id=sid)
+        assert len(approvals) == 1
+        arid = approvals[0].approval_request_id
+        assert arid  # 非空
+
+        # 通知必须带这个真 id（而不是空串）—— 这正是 Bug#1 的修复点
+        notifs = await store.list_observer_notifications(kernel_session_id=sid, status="")
+        appr = [n for n in notifs if n.notification_type == "approval_required"]
+        assert len(appr) == 1
+        assert appr[0].suggested_observer_context.get("approval_request_id") == arid
+
+        # 用那个真 id 批准 → 通知应被收掉（治"永久挂起"）
+        await engine.append_kernel_event(
+            sid,
+            EventType.APPROVAL_GRANTED,
+            payload={"approval_request_id": arid, "decided_by": "u1"},
+        )
+        pending = await store.list_observer_notifications(kernel_session_id=sid, status="pending")
+        assert not any(n.notification_type == "approval_required" for n in pending)
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_same_approval_different_task_id_dedupes_to_one():
+    """Bug#3（对抗）：同一 approval_request_id 伴随不同/缺失 task_id 连发 → 只应弹 1 条通知。"""
+    store, engine = await build_engine()
+    try:
+        session = await engine.create_session(agent_id="a")
+        sid = session.kernel_session_id
+
+        for tid in ("taskA", "taskB", ""):
+            await engine.append_kernel_event(
+                sid,
+                EventType.APPROVAL_REQUESTED,
+                payload={
+                    "approval_request_id": "ar_dup",
+                    "task_id": tid,
+                    "action_summary": "发邮件",
+                },
+            )
+
+        notifs = await store.list_observer_notifications(kernel_session_id=sid, status="")
+        appr = [n for n in notifs if n.notification_type == "approval_required"]
+        assert len(appr) == 1
+    finally:
+        await store.close()

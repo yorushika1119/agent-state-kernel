@@ -65,6 +65,11 @@ NOTIFICATION_POLICIES = {
         priority="high",
         requires_user_visible_message=True,
     ),
+    "approval_required": NotificationPolicy(
+        urgency="important",
+        priority="high",
+        requires_user_visible_message=True,
+    ),
 }
 
 
@@ -149,11 +154,30 @@ class NotificationCoordinator:
             if not session:
                 return created
             task_id = getattr(session, "active_task_id", "") or ""
+            events = [primary_event] + list(side_effects or [])
+
+            # ⓪ 批准事件：不受"任务是否结束"限制，始终处理。
+            #    （防御：万一批准走 pipeline 这条路，而非 append_kernel_event）
+            for event in events:
+                et = getattr(event, "event_type", None)
+                p = getattr(event, "payload", None) or {}
+                if et == EventType.APPROVAL_REQUESTED:
+                    notif = await self.notify_approval_from_event(session_id, event)
+                    if notif:
+                        created.append(notif)
+                elif et in (
+                    EventType.APPROVAL_GRANTED,
+                    EventType.APPROVAL_DENIED,
+                    EventType.APPROVAL_REVOKED,
+                ):
+                    await self.resolve_approval_notification(
+                        session_id, p.get("approval_request_id", "") or ""
+                    )
+
+            # 以下进度类：任务已结束就不再主动报
             status_value = session.status.value if session.status else "running"
             if status_value not in ("running", ""):
-                return created  # 任务已结束，进度类不再主动报
-
-            events = [primary_event] + list(side_effects or [])
+                return created
 
             # ① 冲突：claim/belief 被接受为 conflicting，或出现 ConflictDetected
             for event in events:
@@ -231,6 +255,89 @@ class NotificationCoordinator:
             extra_context=extra,
         )
 
+    async def notify_approval_required(
+        self,
+        *,
+        kernel_session_id: str,
+        task_id: str = "",
+        action_summary: str = "",
+        approval_request_id: str = "",
+    ) -> Optional[ObserverNotification]:
+        extra: Dict[str, Any] = {}
+        if action_summary:
+            extra["action_summary"] = action_summary
+        if approval_request_id:
+            extra["approval_request_id"] = approval_request_id
+        # 去重只按 approval_request_id（全局唯一）、不掺 task_id —— 治 Bug#3：
+        # 同一批准即便伴随不同/缺失 task_id，也只弹一条；查找走会话级（dedupe_session_wide）。
+        dedupe_key = f"approval_required:{approval_request_id or kernel_session_id}"
+        return await self._emit(
+            kernel_session_id=kernel_session_id,
+            task_id=task_id,
+            notification_type="approval_required",
+            reason=f"需要你批准：{action_summary}" if action_summary else "有动作待你批准",
+            extra_context=extra or None,
+            dedupe_key=dedupe_key,
+            dedupe_session_wide=True,
+        )
+
+    async def notify_approval_from_event(
+        self, session_id: str, event: Any
+    ) -> Optional[ObserverNotification]:
+        """从 ApprovalRequested 事件弹通知，但以"批准表那条记录"为准。
+
+        治 Bug#1：通知里的 approval_request_id 用"和 reduce 同一公式算出的权威 id"，
+        而不是 payload 里那个可能为空的 id —— 保证它和批准表对得上，grant 时能收掉。
+        附带 #2 免费防呆：若那条批准已被决定（含乱序），就不弹会永久挂的通知。
+        """
+        p = getattr(event, "payload", None) or {}
+        event_id = getattr(event, "event_id", "") or ""
+        # 与 reduce.py 处理 APPROVAL_REQUESTED 时完全一致的 id 推导
+        approval_request_id = (
+            p.get("approval_request_id")
+            or p.get("approval_id")
+            or f"apr_{event_id[-12:]}"
+        )
+        approval = await self.store.get_approval_request(approval_request_id)
+        if approval is not None and (
+            getattr(approval.status, "value", approval.status) != "pending"
+        ):
+            return None  # 已被决定 → 不弹会永久挂的通知
+        task_id = p.get("task_id", "") or ""
+        action_summary = ""
+        if approval is not None:
+            task_id = approval.task_id or task_id
+            action_summary = approval.action_summary or approval.requested_action or ""
+        if not action_summary:
+            action_summary = p.get("action_summary", "") or p.get("requested_action", "")
+        return await self.notify_approval_required(
+            kernel_session_id=session_id,
+            task_id=task_id,
+            action_summary=action_summary,
+            approval_request_id=approval_request_id,
+        )
+
+    async def resolve_approval_notification(
+        self, kernel_session_id: str, approval_request_id: str
+    ) -> None:
+        """批准被同意/拒绝/撤销后，把对应的 approval_required 通知收掉，别一直挂 pending。"""
+        if not approval_request_id:
+            return
+        notifications = await self.store.list_observer_notifications(
+            target="observer",
+            kernel_session_id=kernel_session_id,
+            status="",
+            limit=200,
+        )
+        for n in notifications:
+            if (
+                n.notification_type == "approval_required"
+                and (n.suggested_observer_context or {}).get("approval_request_id")
+                == approval_request_id
+                and n.status.value != "resolved"
+            ):
+                await self.store.resolve_observer_notification(n.notification_id)
+
     # ------------------------------------------------------------------
     # 通用发通知：策略 + 去重/节流 + 填内容 + 写一条记录
     # ------------------------------------------------------------------
@@ -244,12 +351,17 @@ class NotificationCoordinator:
         reason: str,
         progress_ref: str = "",
         extra_context: Optional[Dict[str, Any]] = None,
+        dedupe_key: Optional[str] = None,
+        dedupe_session_wide: bool = False,
     ) -> Optional[ObserverNotification]:
         policy = await self._policy_for(kernel_session_id, task_id, notification_type)
-        dedupe_key = f"{task_id or kernel_session_id}:{notification_type}"
+        if dedupe_key is None:
+            dedupe_key = f"{task_id or kernel_session_id}:{notification_type}"
+        # dedupe_session_wide：去重查整个会话、不限 task_id（同一批准伴随不同 task_id 也只一条）
+        lookup_task_id = "" if dedupe_session_wide else task_id
         existing = await self._find_existing(
             kernel_session_id,
-            task_id,
+            lookup_task_id,
             dedupe_key=dedupe_key,
             min_interval_seconds=policy.min_interval_seconds,
         )
