@@ -151,18 +151,31 @@ async def reduce(
             or payload.get("approval_id")
             or f"apr_{event.event_id[-12:]}"
         )
-        approval = ApprovalRequest(
-            approval_request_id=approval_request_id,
-            kernel_session_id=session_id,
-            task_id=payload.get("task_id", ""),
-            requested_action=payload.get("requested_action", ""),
-            action_summary=payload.get("action_summary", ""),
-            risk_summary=payload.get("risk_summary", ""),
-            requested_by=payload.get("requested_by", event.source_component or event.actor.value),
-            task_brief_version=payload.get("task_brief_version", 0),
-            metadata=payload.get("metadata", {}),
+        # 防护：重放/重复的 ApprovalRequested 不能把一个"已决"的批准打回 pending
+        existing = await store.get_approval_request(approval_request_id)
+        already_decided = existing is not None and (
+            getattr(existing.status, "value", existing.status)
+            != ApprovalRequestStatus.PENDING.value
         )
-        await store.save_approval_request(approval)
+        if not already_decided:
+            # 防御：payload 由外部(Thinker/工作台/集成)填入，字段可能是 None 或类型不对，
+            # 一律兜底，避免构造 ApprovalRequest 时 pydantic 校验失败而崩掉整个事件写入。
+            metadata = payload.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+            approval = ApprovalRequest(
+                approval_request_id=approval_request_id,
+                kernel_session_id=session_id,
+                task_id=payload.get("task_id") or "",
+                requested_action=payload.get("requested_action") or "",
+                action_summary=payload.get("action_summary") or "",
+                risk_summary=payload.get("risk_summary") or "",
+                requested_by=payload.get("requested_by")
+                or (event.source_component or event.actor.value),
+                task_brief_version=payload.get("task_brief_version") or 0,
+                metadata=metadata,
+            )
+            await store.save_approval_request(approval)
     elif et in (
         EventType.APPROVAL_GRANTED,
         EventType.APPROVAL_DENIED,

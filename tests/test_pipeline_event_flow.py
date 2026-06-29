@@ -1407,3 +1407,61 @@ async def test_same_approval_different_task_id_dedupes_to_one():
         assert len(appr) == 1
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_approval_with_dirty_payload_does_not_crash():
+    """reduce 加固：批准 payload 字段为 None / metadata 非字典时不应崩，记录仍正常落库。"""
+    store, engine = await build_engine()
+    try:
+        session = await engine.create_session(agent_id="a")
+        sid = session.kernel_session_id
+
+        # action_summary=None、task_id=None、metadata 非字典 —— 加固前会 pydantic 崩
+        await engine.append_kernel_event(
+            sid,
+            EventType.APPROVAL_REQUESTED,
+            payload={
+                "approval_request_id": "apr_dirty",
+                "action_summary": None,
+                "task_id": None,
+                "metadata": "not-a-dict",
+            },
+        )
+
+        approvals = await store.list_approval_requests(kernel_session_id=sid)
+        assert len(approvals) == 1
+        assert approvals[0].approval_request_id == "apr_dirty"
+        assert approvals[0].action_summary == ""
+        assert approvals[0].metadata == {}
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_replayed_request_does_not_resurrect_decided_approval():
+    """reduce 加固：已决批准被重复/重放的 ApprovalRequested 命中时，不应被打回 pending。"""
+    store, engine = await build_engine()
+    try:
+        session = await engine.create_session(agent_id="a")
+        sid = session.kernel_session_id
+
+        await engine.append_kernel_event(
+            sid, EventType.APPROVAL_REQUESTED,
+            payload={"approval_request_id": "apr_r", "action_summary": "x"},
+        )
+        await engine.append_kernel_event(
+            sid, EventType.APPROVAL_GRANTED,
+            payload={"approval_request_id": "apr_r", "decided_by": "u1"},
+        )
+        # 重放 / 重复 ApprovalRequested
+        await engine.append_kernel_event(
+            sid, EventType.APPROVAL_REQUESTED,
+            payload={"approval_request_id": "apr_r", "action_summary": "x"},
+        )
+
+        appr = await store.get_approval_request("apr_r")
+        assert appr is not None
+        assert appr.status.value == "granted"  # 仍是已批准，没被打回 pending
+    finally:
+        await store.close()
