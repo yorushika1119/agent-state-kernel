@@ -265,6 +265,17 @@ async def run_pipeline(
 
     await refresh_progress(store, session_id)
 
+    # ⑩ Notify：任务跑到一半就主动汇报（冲突/阻塞/需要输入）。
+    #    通知只是输出，绝不能打断事件管线。
+    try:
+        from src.kms.notification.coordinator import NotificationCoordinator
+
+        await NotificationCoordinator(store).evaluate_pipeline_event(
+            session_id, primary_event, arb_result.side_effects
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
     return PipelineResult(
         True,
         stage="reduce",

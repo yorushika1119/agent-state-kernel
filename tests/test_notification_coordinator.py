@@ -226,3 +226,60 @@ async def test_repeated_task_failures_escalate_to_interrupt_user():
         assert third.delivery_policy["requires_user_visible_message"] is True
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_notify_conflict_carries_progress_content():
+    from src.schema.state import ProgressState
+
+    store = await build_store()
+    try:
+        sid = "ask_conflict_content"
+        await store.save_progress(
+            sid,
+            ProgressState(
+                session_id=sid,
+                status="running",
+                stage="验证",
+                summary="正在核实金额冲突",
+                safe_facts=["已找到 3 个来源"],
+                unsafe_claims=["融资金额为 3000 万美元"],
+            ),
+        )
+        notification = await NotificationCoordinator(store).notify_conflict(
+            kernel_session_id=sid,
+            task_id="",
+            claim="融资金额为 3000 万美元",
+        )
+
+        assert notification is not None
+        assert notification.notification_type == "conflict_detected"
+        ctx = notification.suggested_observer_context
+        assert ctx["one_line_summary"] == "正在核实金额冲突"
+        assert "已找到 3 个来源" in ctx["safe_facts"]
+        assert "融资金额为 3000 万美元" in ctx["uncertain_points"]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_notify_conflict_dedupes():
+    from src.schema.state import ProgressState
+
+    store = await build_store()
+    try:
+        sid = "ask_conflict_dedupe"
+        await store.save_progress(
+            sid, ProgressState(session_id=sid, status="running", summary="x")
+        )
+        coordinator = NotificationCoordinator(store)
+        first = await coordinator.notify_conflict(kernel_session_id=sid, claim="c")
+        second = await coordinator.notify_conflict(kernel_session_id=sid, claim="c")
+        notifications = await store.list_observer_notifications(
+            kernel_session_id=sid, status=""
+        )
+
+        assert first.notification_id == second.notification_id
+        assert len(notifications) == 1
+    finally:
+        await store.close()
